@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from video_analyzer.backends.source import (
+    CaptionResolver,
+    CaptionTrack,
+    MediaAcquirer,
+    SourceBackendFailure,
+    SourceInspector,
+)
+
+
+def _code(exc: BaseException) -> str:
+    value: Any = getattr(exc, "error", exc)
+    return str(getattr(value, "code", getattr(exc, "code", "")))
+
+
+def test_local_inspection_is_bounded_and_preserves_caption_stream_metadata(tmp_path: Path) -> None:
+    source = tmp_path / "clip with spaces.mp4"
+    source.write_bytes(b"fixture")
+
+    def runner(command: list[str], **_: Any) -> Any:
+        assert command[0] == "ffprobe"
+        return {"streams": [{"codec_type": "video", "width": 640}, {"codec_type": "subtitle", "tags": {"language": "en"}}], "format": {"duration": "2.5"}}
+
+    inspection = SourceInspector(runner=runner, ffprobe_bin="ffprobe").inspect(
+        {"source": str(source)}
+    )
+
+    assert inspection.duration_seconds == 2.5
+    assert inspection.caption_tracks[0].language == "en"
+    assert inspection.metadata["source_kind"] == "local"
+    assert inspection.metadata["streams"]
+
+
+def test_url_inspection_disables_provider_config_and_playlists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    class Provider:
+        def extract_info(self, source: str, **options: Any) -> dict[str, Any]:
+            seen["source"] = source
+            seen["options"] = options
+            seen["env"] = os.environ.get("YTDLP_IGNORE_CONFIG")
+            return {
+                "id": "fixture",
+                "duration": 3,
+                "formats": [{"format_id": "18", "vcodec": "h264", "acodec": "aac", "height": 360}],
+                "subtitles": {"en": [{"url": "https://example.test/captions.vtt", "ext": "vtt"}]},
+            }
+
+    monkeypatch.delenv("YTDLP_IGNORE_CONFIG", raising=False)
+    inspection = SourceInspector(yt_dlp_provider=Provider()).inspect({"source": "https://example.test/watch?v=fixture"})
+
+    assert inspection.is_url is True
+    assert inspection.duration_seconds == 3.0
+    assert inspection.caption_tracks[0].kind == "manual"
+    assert seen["env"] == "1"
+    provider_options = seen["options"]["options"]
+    assert provider_options["skip_download"] is True
+    assert provider_options["noplaylist"] is True
+    assert provider_options["postprocessors"] == []
+
+    class PlaylistProvider:
+        def extract_info(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"_type": "playlist", "entries": [{"id": "one"}]}
+
+    with pytest.raises(SourceBackendFailure) as error:
+        SourceInspector(yt_dlp_provider=PlaylistProvider()).inspect({"source": "https://example.test/playlist"})
+    assert _code(error.value) == "SOURCE_NOT_ALLOWED"
+
+
+def test_caption_resolver_prefers_manual_exact_and_parses_provider_payload() -> None:
+    tracks = [
+        CaptionTrack("automatic", "en", "fake", "https://example.test/auto.vtt"),
+        CaptionTrack("manual", "en-US", "fake", "https://example.test/locale.vtt"),
+        CaptionTrack("manual", "en", "fake", "https://example.test/exact.vtt"),
+    ]
+
+    resolver = CaptionResolver(
+        yt_dlp_provider=type("Provider", (), {"fetch_caption": lambda _self, url: "WEBVTT\n\n00:00.000 --> 00:01.000\nhello"})()
+    )
+    inspection = type("Inspection", (), {"source": "/tmp/fixture.mp4", "is_url": False, "caption_tracks": tracks})()
+    selected = resolver.resolve(inspection, {"language": "en"})
+
+    assert selected is not None
+    assert selected.kind == "manual"
+    assert selected.language == "en"
+    assert selected.segments[0]["text"] == "hello"
+
+
+def test_url_acquisition_applies_format_stream_and_download_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class Downloader:
+        def download(self, source: str, *, options: dict[str, Any], progress_hook: Any = None) -> None:
+            captured["source"] = source
+            captured["options"] = options
+            target = Path(str(options["outtmpl"]).replace("%(ext)s", "mp4"))
+            target.write_bytes(b"bounded-media")
+            if progress_hook:
+                progress_hook({"downloaded_bytes": target.stat().st_size, "filename": str(target)})
+
+    inspection = type(
+        "Inspection",
+        (),
+        {
+            "source": "https://example.test/watch?v=fixture",
+            "is_url": True,
+            "formats": [
+                {"format_id": "video-only", "vcodec": "h264", "acodec": "none", "height": 720},
+                {"format_id": "muxed", "vcodec": "h264", "acodec": "aac", "height": 360, "filesize": 100},
+            ],
+        },
+    )()
+    request = {
+        "time_range": {"start_seconds": 1, "end_seconds": 3},
+        "tasks": {"frames"},
+        "max_download_bytes": 1024,
+        "timeout_seconds": 30,
+        "output_directory": tmp_path,
+        "request_id": "run",
+    }
+    monkeypatch.delenv("YTDLP_IGNORE_CONFIG", raising=False)
+    result = MediaAcquirer(downloader=Downloader()).acquire_window(inspection, request)
+
+    assert Path(result).read_bytes() == b"bounded-media"
+    assert captured["options"]["format"] == "muxed"
+    assert captured["options"]["download_sections"] == ["*1.000000-3.000000"]
+    assert captured["options"]["max_filesize"] == 1024
+    assert os.environ.get("YTDLP_IGNORE_CONFIG") is None

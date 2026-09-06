@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "video-analyzer"
+version = "0.1.0"
+description = "Bounded local video analysis through a shared API, CLI, and MCP tool."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastmcp>=3,<4",
+  "pydantic>=2,<3",
+  "typer>=0.12,<1",
+  "yt-dlp==2026.8.19",
+  "youtube-transcript-api==1.2.4",
+  "faster-whisper==1.2.1",
+  "silero-vad==6.2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.4",
+  "mypy>=1",
+]
+
+[project.scripts]
+video-analyzer = "video_analyzer.cli:app"
+video-analyzer-mcp = "video_analyzer.mcp:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_analyzer"]
+
+[tool.mypy]
+python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = [
+  "tests.*",
+  "test_artifacts",
+  "test_backends",
+  "test_cli",
+  "test_contracts",
+  "test_core",
+  "test_mcp",
+  "test_planner",
+  "test_source",
+]
+ignore_errors = true
