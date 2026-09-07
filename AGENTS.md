@@ -54,7 +54,13 @@ Heavy ML runtimes are separated into optional package extras to preserve lean co
 
 ---
 
-## 3. Development & Verification Workflow
+## 3. Changelog
+- For user-visible features, bug fixes, breaking changes, security fixes, and dependency, runtime, deployment, or configuration changes that affect users or operators, add a concise entry under `## [Unreleased]` in `CHANGELOG.md`.
+- Use the existing Keep a Changelog categories and style.
+- Leave the changelog unchanged for test-only changes, internal refactors, formatting, and documentation-only changes without user-visible impact.
+- Do not create versioned release headings; add those during release preparation.
+
+## 4. Development & Verification Workflow
 
 Always verify changes using the standardized verification commands:
 
