@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -7,7 +8,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from video_analyzer.contracts import AnalyzeVideoRequest, TimeRange
+from vidscope.contracts import AnalyzeVideoRequest, TimeRange
 
 
 def make_request(
@@ -47,6 +48,31 @@ def test_accepts_https_file_uri_and_absolute_local_file(tmp_path: Path) -> None:
         getattr(request, "source", None)
         for request in (https_request, file_uri_request, local_request)
     )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics require Windows")
+def test_accepts_windows_drive_path_and_file_uri(tmp_path: Path) -> None:
+    source_file = tmp_path / "fixture.mp4"
+    source_file.write_bytes(b"fixture")
+
+    local_request = make_request(tmp_path, str(source_file))
+    file_uri_request = make_request(tmp_path, source_file.as_uri())
+
+    assert local_request.source_path == source_file.resolve()
+    assert file_uri_request.source_path == source_file.resolve()
+    assert local_request.is_url is False
+    assert file_uri_request.is_url is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics require Windows")
+def test_accepts_windows_drive_authority_file_uri(tmp_path: Path) -> None:
+    source_file = tmp_path / "fixture.mp4"
+    source_file.write_bytes(b"fixture")
+    file_uri = source_file.as_uri().replace("file:///", "file://", 1)
+
+    request = make_request(tmp_path, file_uri)
+
+    assert request.source_path == source_file.resolve()
 
 
 @pytest.mark.parametrize(
@@ -171,7 +197,7 @@ def test_rejects_input_symlink_that_escapes_allowed_root(
     outside_file.write_bytes(b"outside")
     escaped_link = allowed_root / "escaped.mp4"
     escaped_link.symlink_to(outside_file)
-    monkeypatch.setenv("VIDEO_ANALYZER_ALLOWED_INPUT_ROOT", str(allowed_root))
+    monkeypatch.setenv("VIDSCOPE_ALLOWED_INPUT_ROOT", str(allowed_root))
 
     assert_rejected(lambda: make_request(tmp_path, str(escaped_link)))
 

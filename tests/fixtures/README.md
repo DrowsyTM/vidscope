@@ -1,6 +1,6 @@
 # Test Fixtures Provenance & Licenses
 
-This directory contains deterministic test fixtures used in testing and benchmarking `video-analyzer`.
+This directory contains deterministic test fixtures used in testing and benchmarking `vidscope`.
 
 ## Files
 

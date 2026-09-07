@@ -1,4 +1,4 @@
-"""Deterministic preflight planning for the local video analyzer.
+"""Deterministic preflight planning for vidscope.
 
 The planner deliberately knows nothing about backend implementations.  It turns a
 validated request and source inspection into a bounded, ordered DAG, and rejects
@@ -463,17 +463,17 @@ def build_execution_plan(
         if not bool(capabilities.asr):
             _raise_failure(
                 "ASR_MODEL_UNAVAILABLE",
-                "local ASR capability is unavailable for transcript fallback (install with: pip install 'video-analyzer[asr]')",
+                "local ASR capability is unavailable for transcript fallback (install with: pip install 'vidscope[asr]')",
             )
         if not bool(capabilities.vad):
             _raise_failure(
                 "TOOL_UNAVAILABLE",
-                "local VAD capability is unavailable for transcript fallback (install with: pip install 'video-analyzer[asr]')",
+                "local VAD capability is unavailable for transcript fallback (install with: pip install 'vidscope[asr]')",
             )
     if wants_vad and not bool(capabilities.vad):
         _raise_failure(
             "TOOL_UNAVAILABLE",
-            "local VAD capability is unavailable (install with: pip install 'video-analyzer[vad]')",
+            "local VAD capability is unavailable (install with: pip install 'vidscope[vad]')",
         )
     if wants_visual or wants_vad or asr_fallback:
         _require_media_capabilities(capabilities)

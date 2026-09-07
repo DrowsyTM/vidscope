@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "video-analyzer"
+name = "vidscope"
 version = "0.1.0"
 description = "Bounded local video analysis through a shared API, CLI, and FastMCP tool."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [
-  { name = "video-analyzer contributors" }
+  { name = "vidscope contributors" }
 ]
 requires-python = ">=3.12,<3.14"
 keywords = ["video", "analysis", "mcp", "fastmcp", "whisper", "tesseract", "cli", "agent"]
@@ -33,7 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# In video-analyzer, local ASR speech fallback mandates voice activity detection.
+# In vidscope, local ASR speech fallback mandates voice activity detection.
 # Bundling silero-vad into [asr] guarantees a functional speech pipeline.
 asr = [
   "faster-whisper>=1.2.0",
@@ -57,18 +57,18 @@ dev = [
 ]
 
 [project.scripts]
-video-analyzer = "video_analyzer.cli:app"
-video-analyzer-mcp = "video_analyzer.mcp:main"
+vidscope = "vidscope.cli:app"
+vidscope-mcp = "vidscope.mcp:main"
 
 [project.urls]
-Homepage = "https://github.com/dima/video-analyzer"
-Documentation = "https://github.com/dima/video-analyzer#readme"
-Repository = "https://github.com/dima/video-analyzer.git"
-Issues = "https://github.com/dima/video-analyzer/issues"
-Changelog = "https://github.com/dima/video-analyzer/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/DrowsyTM/vidscope"
+Documentation = "https://github.com/DrowsyTM/vidscope#readme"
+Repository = "https://github.com/DrowsyTM/vidscope.git"
+Issues = "https://github.com/DrowsyTM/vidscope/issues"
+Changelog = "https://github.com/DrowsyTM/vidscope/blob/master/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/video_analyzer"]
+packages = ["src/vidscope"]
 
 [tool.ruff]
 line-length = 88
@@ -93,7 +93,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["video_analyzer"]
+known-first-party = ["vidscope"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -102,7 +102,7 @@ warn_unused_configs = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]
-module = "video_analyzer.*"
+module = "vidscope.*"
 disallow_untyped_defs = true
 check_untyped_defs = true
 

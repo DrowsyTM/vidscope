@@ -1,7 +1,7 @@
-"""Structured logging configuration for video_analyzer.
+"""Structured logging configuration for vidscope.
 
 Adheres to PEP 282 by attaching a NullHandler by default so importing
-video_analyzer as a library never hijacks application logging.
+vidscope as a library never hijacks application logging.
 Strictly isolates diagnostics and progress to sys.stderr to preserve
 sys.stdout as a pure JSON / JSON-RPC communication transport for CLI
 piping and FastMCP stdio.
@@ -14,7 +14,7 @@ import os
 import sys
 from typing import Final
 
-LOGGER_NAME: Final = "video_analyzer"
+LOGGER_NAME: Final = "vidscope"
 
 logger = logging.getLogger(LOGGER_NAME)
 logger.addHandler(logging.NullHandler())
@@ -29,7 +29,7 @@ def configure_logging(
 
     Args:
         level: Optional log level name or integer. Defaults to the
-            VIDEO_ANALYZER_LOG_LEVEL environment variable or INFO.
+            VIDSCOPE_LOG_LEVEL environment variable or INFO.
         force_handler: If True, adds a stderr StreamHandler even if handlers exist.
     """
     resolved_level: int
@@ -39,7 +39,7 @@ def configure_logging(
         else:
             resolved_level = level
     else:
-        env_level = os.environ.get("VIDEO_ANALYZER_LOG_LEVEL", "INFO").strip().upper()
+        env_level = os.environ.get("VIDSCOPE_LOG_LEVEL", "INFO").strip().upper()
         resolved_level = getattr(logging, env_level, logging.INFO)
 
     logger.setLevel(resolved_level)

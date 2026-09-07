@@ -1,7 +1,7 @@
 """Source inspection, caption resolution, and bounded media acquisition.
 
 This module deliberately keeps third-party imports inside the operations that use
-those providers.  Importing :mod:`video_analyzer.backends.source` therefore does
+those providers.  Importing :mod:`vidscope.backends.source` therefore does
 not load yt-dlp, the YouTube transcript client, or any media/model runtime.
 """
 
@@ -27,7 +27,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from ..contracts import AnalysisError, ErrorCode
+from ..contracts import (
+    AnalysisError,
+    ErrorCode,
+    _is_windows_drive_authority,
+    _is_windows_drive_path,
+)
 
 
 class _MuffledLogger:
@@ -372,10 +377,10 @@ def _settings_value(settings: Any, name: str, default: Any = None) -> Any:
             if value is not None:
                 return value
     env_name = {
-        "ffprobe_bin": "VIDEO_ANALYZER_FFPROBE_BIN",
-        "ffmpeg_bin": "VIDEO_ANALYZER_FFMPEG_BIN",
-        "allowed_input_root": "VIDEO_ANALYZER_ALLOWED_INPUT_ROOT",
-        "allowed_output_root": "VIDEO_ANALYZER_ALLOWED_OUTPUT_ROOT",
+        "ffprobe_bin": "VIDSCOPE_FFPROBE_BIN",
+        "ffmpeg_bin": "VIDSCOPE_FFMPEG_BIN",
+        "allowed_input_root": "VIDSCOPE_ALLOWED_INPUT_ROOT",
+        "allowed_output_root": "VIDSCOPE_ALLOWED_OUTPUT_ROOT",
     }.get(name)
     if env_name and os.environ.get(env_name):
         return os.environ[env_name]
@@ -493,6 +498,8 @@ def _yt_env() -> Iterator[None]:
 
 
 def _source_path(source: str) -> Path | None:
+    if _is_windows_drive_path(source):
+        return Path(source)
     parsed = urllib.parse.urlparse(source)
     if parsed.scheme.lower() == "file":
         if parsed.username or parsed.password or parsed.fragment:
@@ -501,19 +508,25 @@ def _source_path(source: str) -> Path | None:
                 "file URI credentials and fragments are not allowed",
                 stage="validate_source",
             )
-        if parsed.netloc not in ("", "localhost"):
+        drive_authority = _is_windows_drive_authority(parsed.netloc)
+        if parsed.netloc.lower() not in ("", "localhost") and not drive_authority:
             raise _failure(
                 "SOURCE_NOT_ALLOWED",
                 "file URI host is not allowed",
                 stage="validate_source",
             )
-        return Path(urllib.parse.unquote(parsed.path))
+        uri_path = parsed.path
+        if drive_authority:
+            uri_path = f"{parsed.netloc}{uri_path}"
+        return Path(urllib.request.url2pathname(uri_path))
     if parsed.scheme:
         return None
     return Path(source).expanduser()
 
 
 def _source_is_url(source: str) -> bool:
+    if _is_windows_drive_path(source):
+        return False
     parsed = urllib.parse.urlparse(source)
     return parsed.scheme.lower() in ("https", "http")
 
@@ -678,13 +691,14 @@ class SourceInspector:
         if _source_is_url(source):
             _validate_network_url(source, resolve_dns=(self.yt_dlp_provider is None))
             return self._inspect_url(source)
-        parsed = urllib.parse.urlparse(source)
-        if parsed.scheme and parsed.scheme.lower() != "file":
-            raise _failure(
-                "URL_SCHEME_NOT_ALLOWED",
-                "source URL scheme is not allowed",
-                stage="validate_source",
-            )
+        if not _is_windows_drive_path(source):
+            parsed = urllib.parse.urlparse(source)
+            if parsed.scheme and parsed.scheme.lower() != "file":
+                raise _failure(
+                    "URL_SCHEME_NOT_ALLOWED",
+                    "source URL scheme is not allowed",
+                    stage="validate_source",
+                )
         path = _validate_local_path(_source_path(source) or Path(source), self.settings)
         return self._inspect_local(source, path)
 
@@ -1308,7 +1322,7 @@ class CaptionResolver:
                     except Exception:
                         return None
         request = urllib.request.Request(
-            track.source_url, headers={"User-Agent": "video-analyzer/0.1"}
+            track.source_url, headers={"User-Agent": "vidscope/0.1"}
         )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
@@ -1412,11 +1426,7 @@ def _store_stage_directory(store: Any, request: Any) -> Path:
             return path
     output = _mapping_value(request, "output_directory")
     request_id = _mapping_value(request, "request_id") or "run"
-    base = (
-        Path(output)
-        if output
-        else Path(tempfile.mkdtemp(prefix="video-analyzer-output-"))
-    )
+    base = Path(output) if output else Path(tempfile.mkdtemp(prefix="vidscope-output-"))
     path = base / str(request_id) / "staging"
     path.mkdir(parents=True, exist_ok=True)
     return path

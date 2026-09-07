@@ -1,10 +1,11 @@
-# video-analyzer
+# vidscope
 
-[![CI](https://github.com/dima/video-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/dima/video-analyzer/actions/workflows/ci.yml)
-[![PyPI version](https://img.shields.io/pypi/v/video-analyzer.svg)](https://pypi.org/project/video-analyzer/)
-[![Python versions](https://img.shields.io/pypi/pyversions/video-analyzer.svg)](https://pypi.org/project/video-analyzer/)
+[![CI](https://github.com/DrowsyTM/vidscope/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/DrowsyTM/vidscope/actions/workflows/ci.yml)
+[![Security Analysis](https://github.com/DrowsyTM/vidscope/actions/workflows/security.yml/badge.svg?branch=master)](https://github.com/DrowsyTM/vidscope/actions/workflows/security.yml)
+[![PyPI version](https://img.shields.io/pypi/v/vidscope.svg)](https://pypi.org/project/vidscope/)
+[![Python versions](https://img.shields.io/pypi/pyversions/vidscope.svg)](https://pypi.org/project/vidscope/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dima/video-analyzer/badge)](https://scorecard.dev/viewer/?pup=github.com/dima/video-analyzer)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/DrowsyTM/vidscope/badge)](https://scorecard.dev/viewer/?uri=github.com/DrowsyTM/vidscope)
 
 > Local-first, sandboxed video analysis runtime exposing a unified Python API, CLI, and FastMCP server for LLM agents.
 
@@ -12,11 +13,11 @@
 
 ## Overview
 
-`video-analyzer` provides deterministic, bounded multimodal video inspection without relying on third-party cloud APIs. Designed specifically for AI agent integration (such as Claude Desktop, Cursor, and custom agentic frameworks), `video-analyzer` analyzes video streams, extracts keyframes, performs optical character recognition (OCR), extracts native subtitles, detects speech activity (VAD), and runs local automatic speech recognition (ASR) fallback.
+`vidscope` provides deterministic, bounded multimodal video inspection without relying on third-party cloud APIs. Designed specifically for AI agent integration (such as Claude Desktop, Cursor, and custom agentic frameworks), `vidscope` analyzes video streams, extracts keyframes, performs optical character recognition (OCR), extracts native subtitles, detects speech activity (VAD), and runs local automatic speech recognition (ASR) fallback.
 
 ### Key Highlights
 
-- **Standard FastMCP Tool Server**: First-class MCP server over standard I/O (`video-analyzer mcp`), allowing coding assistants and LLMs to inspect videos directly through function calling.
+- **Standard FastMCP Tool Server**: First-class MCP server over standard I/O (`vidscope mcp`), allowing coding assistants and LLMs to inspect videos directly through function calling.
 - **Pure Standard Output**: Strict separation of communication channels. FastMCP JSON-RPC messages and CLI JSON envelopes are emitted cleanly to standard output, while diagnostic and operational logs route to standard error.
 - **Subprocess Sandboxing**: Hardened execution using `-nostdin` and `-protocol_whitelist "file,pipe,crypto,data"` across FFmpeg and FFprobe backends, plus POSIX option terminators (`--`) for Tesseract.
 - **Layered SSRF Protection**: Inbound URL validation rejects private IP ranges (RFC 1918), loopback, link-local (AWS/GCP/Azure instance metadata endpoints), and malformed schemes before any network resolution occurs.
@@ -76,7 +77,7 @@ flowchart TD
 
 ## System Prerequisites
 
-`video-analyzer` relies on standard system media utilities:
+`vidscope` relies on standard system media utilities:
 
 ### Ubuntu / Debian
 ```bash
@@ -95,21 +96,21 @@ brew install ffmpeg tesseract
 
 ### Core Package (Lightweight CLI & FastMCP Server)
 ```bash
-pip install video-analyzer
+pip install vidscope
 # or using uv:
-uv add video-analyzer
+uv add vidscope
 ```
 
 ### With Speech & Transcription Extras
 ```bash
 # Local speech transcription (Faster-Whisper + Silero VAD)
-pip install 'video-analyzer[asr]'
+pip install 'vidscope[asr]'
 
 # Voice activity detection only
-pip install 'video-analyzer[vad]'
+pip install 'vidscope[vad]'
 
 # All features and extras
-pip install 'video-analyzer[all]'
+pip install 'vidscope[all]'
 ```
 
 ---
@@ -117,28 +118,28 @@ pip install 'video-analyzer[all]'
 ## FastMCP Configuration (Claude Desktop & Cursor)
 
 ### Claude Desktop
-Add `video-analyzer` to your `claude_desktop_config.json`:
+Add `vidscope` to your `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "video-analyzer": {
+    "vidscope": {
       "command": "uvx",
-      "args": ["--from", "video-analyzer[all]", "video-analyzer", "mcp"]
+      "args": ["--from", "vidscope[all]", "vidscope", "mcp"]
     }
   }
 }
 ```
 
 ### Cursor
-Add `video-analyzer` to `.cursor/mcp.json`:
+Add `vidscope` to `.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "video-analyzer": {
+    "vidscope": {
       "command": "uvx",
-      "args": ["--from", "video-analyzer[all]", "video-analyzer", "mcp"]
+      "args": ["--from", "vidscope[all]", "vidscope", "mcp"]
     }
   }
 }
@@ -150,7 +151,7 @@ Add `video-analyzer` to `.cursor/mcp.json`:
 
 ### Analyze Video Window
 ```bash
-video-analyzer analyze-video \
+vidscope analyze-video \
   --source "https://example.com/clip.mp4" \
   --out "./output_dir" \
   --start-seconds 0 \
@@ -164,7 +165,7 @@ video-analyzer analyze-video \
 
 ### Run MCP Server
 ```bash
-video-analyzer mcp
+vidscope mcp
 ```
 
 ### CLI Options
@@ -182,7 +183,7 @@ video-analyzer mcp
 
 ```python
 from pathlib import Path
-from video_analyzer import (
+from vidscope import (
     AnalysisContext,
     AnalyzeVideoRequest,
     TimeRange,
@@ -221,12 +222,12 @@ A production container image with non-root security boundaries and pre-installed
 
 ```bash
 # Pull and run container in MCP mode
-docker run -i --rm ghcr.io/dima/video-analyzer:latest
+docker run -i --rm ghcr.io/drowsytm/vidscope:latest
 ```
 
 Building locally:
 ```bash
-docker build -t video-analyzer:latest .
+docker build -t vidscope:latest .
 ```
 
 ---
@@ -234,9 +235,8 @@ docker build -t video-analyzer:latest .
 ## Development & Testing
 
 ```bash
-# Clone repository
-git clone https://github.com/dima/video-analyzer.git
-cd video-analyzer
+git clone https://github.com/DrowsyTM/vidscope.git vidscope
+cd vidscope
 
 # Sync all development dependencies
 uv sync --all-extras
@@ -249,7 +249,7 @@ uv run ruff format --check .
 uv run mypy src tests
 
 # Unit test suite with coverage
-uv run pytest --cov=video_analyzer --cov-report=term-missing
+uv run pytest --cov=vidscope --cov-report=term-missing
 
 # Run benchmarks
 uv run pytest benchmarks/ --benchmark-only

@@ -128,7 +128,7 @@ class ArtifactStore:
         self.staging_directory = self.run_directory / "staging"
         self.root = self.run_directory
         self.max_output_bytes = max(1, int(max_output_bytes))
-        self.manifest_uri = f"video-analyzer://runs/{self.run_id}/manifest"
+        self.manifest_uri = f"vidscope://runs/{self.run_id}/manifest"
         self._manifest: dict[str, Any] = {}
         self._artifact_paths: dict[str, Path] = {}
         self._artifact_bytes = 0
@@ -222,7 +222,7 @@ class ArtifactStore:
     def write_plan(self, plan: Any) -> Path:
         self._require_created()
         self._write_json_atomic(self.plan_path, plan)
-        self._manifest["plan_uri"] = f"video-analyzer://runs/{self.run_id}/plan"
+        self._manifest["plan_uri"] = f"vidscope://runs/{self.run_id}/plan"
         self.write_manifest()
         return self.plan_path
 
@@ -388,7 +388,7 @@ class ArtifactStore:
         artifact_metadata["relative_path"] = relative.as_posix()
         ref = ArtifactRef(
             artifact_id=artifact_id,
-            uri=f"video-analyzer://runs/{self.run_id}/artifacts/{artifact_id}",
+            uri=f"vidscope://runs/{self.run_id}/artifacts/{artifact_id}",
             media_type=media_type
             or mimetypes.guess_type(target.name)[0]
             or "application/octet-stream",
@@ -564,7 +564,7 @@ class ArtifactStore:
         limit: int = 200,
     ) -> str | bytes:
         parsed = urlsplit(uri)
-        if parsed.scheme != "video-analyzer" or parsed.netloc != "runs":
+        if parsed.scheme != "vidscope" or parsed.netloc != "runs":
             raise ArtifactStoreFailure(
                 _error("ARTIFACT_NOT_FOUND", "artifact URI is invalid")
             )

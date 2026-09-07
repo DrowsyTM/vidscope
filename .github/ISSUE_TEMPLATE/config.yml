@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Community Discussion
-    url: "https://github.com/dima/video-analyzer/discussions"
+    url: "https://github.com/DrowsyTM/vidscope/discussions"
     about: Ask questions, discuss architecture, or share ideas.
   - name: Private Security Reporting
-    url: "https://github.com/dima/video-analyzer/security/advisories/new"
+    url: "https://github.com/DrowsyTM/vidscope/security/advisories/new"
     about: Use the owner-selected private channel to report a security vulnerability.

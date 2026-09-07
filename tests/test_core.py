@@ -18,11 +18,11 @@ from typing import Any, cast
 
 import pytest
 
-from video_analyzer.backends.source import CaptionTrack, SourceInspection
-from video_analyzer.contracts import AnalyzeVideoRequest, TimeRange
-from video_analyzer.core import AnalysisContext, VideoAnalyzerFailure, analyze_video
+from vidscope.backends.source import CaptionTrack, SourceInspection
+from vidscope.contracts import AnalyzeVideoRequest, TimeRange
+from vidscope.core import AnalysisContext, VideoAnalyzerFailure, analyze_video
 
-ARTIFACT_URI = re.compile(r"^video-analyzer://runs/[^/]+/artifacts/[^/]+$")
+ARTIFACT_URI = re.compile(r"^vidscope://runs/[^/]+/artifacts/[^/]+$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -595,7 +595,7 @@ def test_caption_transcript_is_artifact_only_with_complete_hash_metadata(
     )
     assert dumped["ok"] is True
     assert dumped["status"] == "completed"
-    assert str(dumped["manifest_uri"]).startswith("video-analyzer://runs/")
+    assert str(dumped["manifest_uri"]).startswith("vidscope://runs/")
 
     run_dir = _run_dir(request)
     transcript = run_dir / "transcript.jsonl"
@@ -759,7 +759,7 @@ def test_optional_visual_failure_returns_useful_partial_result(tmp_path: Path) -
     assert dumped["ok"] is True
     assert dumped["status"] == "partial"
     assert "caption body must remain in the artifact" not in json.dumps(dumped)
-    assert str(dumped["manifest_uri"]).startswith("video-analyzer://runs/")
+    assert str(dumped["manifest_uri"]).startswith("vidscope://runs/")
     manifest = _read_json(_run_dir(request) / "manifest.json")
     assert _stage(manifest, "captions")["status"] == "completed"
     assert _stage(manifest, "extract_frames")["status"] == "failed"
@@ -791,7 +791,7 @@ def test_terminal_stage_error_raises_with_manifest_reference(tmp_path: Path) -> 
     assert failure.error.code == "INTERNAL_STAGE_FAILED"
     assert failure.error.stage == "transcribe"
     assert failure.manifest_uri
-    assert str(failure.manifest_uri).startswith("video-analyzer://runs/")
+    assert str(failure.manifest_uri).startswith("vidscope://runs/")
     manifest = _read_json(_run_dir(request) / "manifest.json")
     failed = _stage(manifest, "transcribe")
     assert failed["status"] == "failed"

@@ -21,7 +21,7 @@ def _construct(model: type[Any], **values: Any) -> Any:
 
 
 def _request(source: Path, output: Path) -> Any:
-    from video_analyzer.contracts import AnalyzeVideoRequest, TimeRange
+    from vidscope.contracts import AnalyzeVideoRequest, TimeRange
 
     return AnalyzeVideoRequest(
         source=str(source),
@@ -32,9 +32,9 @@ def _request(source: Path, output: Path) -> Any:
 
 
 def _success_result() -> Any:
-    from video_analyzer.contracts import AnalysisResult, AnalysisSummary, ArtifactRef
+    from vidscope.contracts import AnalysisResult, AnalysisSummary, ArtifactRef
 
-    uri = "video-analyzer://runs/run-mcp/artifacts/transcript"
+    uri = "vidscope://runs/run-mcp/artifacts/transcript"
     artifact = _construct(
         ArtifactRef,
         artifact_id="transcript",
@@ -56,7 +56,7 @@ def _success_result() -> Any:
         summary=summary,
         stages=[],
         warnings=[],
-        manifest_uri="video-analyzer://runs/run-mcp/manifest",
+        manifest_uri="vidscope://runs/run-mcp/manifest",
         artifacts=[artifact],
         artifact_refs=[artifact],
     )
@@ -67,7 +67,7 @@ def _error(
     stage: str = "transcribe",
     message: str = "deterministic test failure",
 ) -> Any:
-    from video_analyzer.contracts import AnalysisError
+    from vidscope.contracts import AnalysisError
 
     return _construct(
         AnalysisError,
@@ -79,20 +79,20 @@ def _error(
         retryable=False,
         diagnostics={"detail": "fixture"},
         artifact_refs=[],
-        manifest_uri="video-analyzer://runs/run-mcp/manifest",
+        manifest_uri="vidscope://runs/run-mcp/manifest",
     )
 
 
 def _failure(error: Any) -> BaseException:
-    from video_analyzer.core import VideoAnalyzerFailure
+    from vidscope.core import VideoAnalyzerFailure
 
     return VideoAnalyzerFailure(error)
 
 
 def _patch_core(monkeypatch: pytest.MonkeyPatch, replacement: Any) -> Any:
     """Patch both the core module and the common FastMCP import alias."""
-    import video_analyzer.core as core_module
-    import video_analyzer.mcp as mcp_module
+    import vidscope.core as core_module
+    import vidscope.mcp as mcp_module
 
     original = core_module.analyze_video
     monkeypatch.setattr(core_module, "analyze_video", replacement)
@@ -213,7 +213,7 @@ def _tool_annotation(tool: Any, name: str) -> Any:
 
 
 def test_mcp_registers_only_analyze_video_with_non_mutating_annotations() -> None:
-    from video_analyzer.mcp import mcp
+    from vidscope.mcp import mcp
 
     list_tools = getattr(mcp, "list_tools", None)
     if callable(list_tools):
@@ -234,7 +234,7 @@ def test_mcp_registers_only_analyze_video_with_non_mutating_annotations() -> Non
 def test_mcp_success_returns_shared_result_unchanged_and_compact_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from video_analyzer.mcp import analyze_video
+    from vidscope.mcp import analyze_video
 
     source = tmp_path / "clip.mp4"
     source.write_bytes(b"deterministic fixture")
@@ -259,16 +259,14 @@ def test_mcp_success_returns_shared_result_unchanged_and_compact_artifacts(
     payload = returned.model_dump(mode="json")
     assert payload["ok"] is True
     assert payload["status"] == "completed"
-    assert payload["manifest_uri"].startswith("video-analyzer://")
-    assert all(
-        item["uri"].startswith("video-analyzer://") for item in payload["artifacts"]
-    )
+    assert payload["manifest_uri"].startswith("vidscope://")
+    assert all(item["uri"].startswith("vidscope://") for item in payload["artifacts"])
 
 
 def test_mcp_terminal_failure_is_error_tool_result_with_shared_error_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from video_analyzer.mcp import analyze_video
+    from vidscope.mcp import analyze_video
 
     source = tmp_path / "clip.mp4"
     source.write_bytes(b"deterministic fixture")
@@ -292,7 +290,7 @@ def test_mcp_terminal_failure_is_error_tool_result_with_shared_error_payload(
 def test_mcp_empty_transcript_is_not_a_successful_tool_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from video_analyzer.mcp import analyze_video
+    from vidscope.mcp import analyze_video
 
     source = tmp_path / "clip.mp4"
     source.write_bytes(b"deterministic fixture")
@@ -333,7 +331,7 @@ def test_mcp_empty_transcript_returns_tool_error(
 ) -> None:
     from fastmcp.tools.base import ToolResult
 
-    from video_analyzer.mcp import analyze_video
+    from vidscope.mcp import analyze_video
 
     source = tmp_path / "clip.mp4"
     source.write_bytes(b"deterministic fixture")
@@ -405,7 +403,7 @@ def _resource_lines(value: Any) -> list[dict[str, Any]]:
 def _write_resource_fixture(root: Path) -> str:
     run_id = "run-resource"
     artifact_id = "transcript"
-    uri = f"video-analyzer://runs/{run_id}/artifacts/{artifact_id}"
+    uri = f"vidscope://runs/{run_id}/artifacts/{artifact_id}"
     records = "".join(
         json.dumps({"index": index, "text": f"segment-{index}"}) + "\n"
         for index in range(450)
@@ -445,9 +443,9 @@ def _write_resource_fixture(root: Path) -> str:
 def test_resource_pages_jsonl_and_rejects_invalid_uri_or_range(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import video_analyzer.mcp as mcp_module
+    import vidscope.mcp as mcp_module
 
-    monkeypatch.setenv("VIDEO_ANALYZER_ALLOWED_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("VIDSCOPE_ALLOWED_OUTPUT_ROOT", str(tmp_path))
     uri = _write_resource_fixture(tmp_path)
     reader = mcp_module.read_artifact_resource
 

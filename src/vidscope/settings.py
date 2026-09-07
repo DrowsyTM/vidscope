@@ -1,4 +1,4 @@
-"""Explicit, local-only configuration for the video analyzer.
+"""Explicit, local-only configuration for vidscope.
 
 This module deliberately does not inspect the host for executables, create cache
 or output directories, or import optional media/model dependencies.  Adapters
@@ -14,13 +14,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-ALLOWED_INPUT_ROOT_ENV: Final = "VIDEO_ANALYZER_ALLOWED_INPUT_ROOT"
-TESSERACT_BIN_ENV: Final = "VIDEO_ANALYZER_TESSERACT_BIN"
-TESSDATA_PREFIX_ENV: Final = "VIDEO_ANALYZER_TESSDATA_PREFIX"
-FFMPEG_BIN_ENV: Final = "VIDEO_ANALYZER_FFMPEG_BIN"
-FFPROBE_BIN_ENV: Final = "VIDEO_ANALYZER_FFPROBE_BIN"
-MODEL_CACHE_ENV: Final = "VIDEO_ANALYZER_MODEL_CACHE"
-ALLOWED_OUTPUT_ROOT_ENV: Final = "VIDEO_ANALYZER_ALLOWED_OUTPUT_ROOT"
+ALLOWED_INPUT_ROOT_ENV: Final = "VIDSCOPE_ALLOWED_INPUT_ROOT"
+TESSERACT_BIN_ENV: Final = "VIDSCOPE_TESSERACT_BIN"
+TESSDATA_PREFIX_ENV: Final = "VIDSCOPE_TESSDATA_PREFIX"
+FFMPEG_BIN_ENV: Final = "VIDSCOPE_FFMPEG_BIN"
+FFPROBE_BIN_ENV: Final = "VIDSCOPE_FFPROBE_BIN"
+MODEL_CACHE_ENV: Final = "VIDSCOPE_MODEL_CACHE"
+ALLOWED_OUTPUT_ROOT_ENV: Final = "VIDSCOPE_ALLOWED_OUTPUT_ROOT"
 LEGACY_TESSDATA_PREFIX_ENV: Final = "TESSDATA_PREFIX"
 
 
@@ -94,9 +94,9 @@ def _normalize_path(
 def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     """Load deterministic local settings from ``environ`` or ``os.environ``.
 
-    Only the explicit ``VIDEO_ANALYZER_*`` variables are consumed.  The bare
+    Only the explicit ``VIDSCOPE_*`` variables are consumed.  The bare
     ``TESSDATA_PREFIX`` variable is accepted solely as a compatibility fallback
-    when ``VIDEO_ANALYZER_TESSDATA_PREFIX`` is absent; an explicitly empty
+    when ``VIDSCOPE_TESSDATA_PREFIX`` is absent; an explicitly empty
     prefixed value therefore still takes precedence and disables the fallback.
     """
 

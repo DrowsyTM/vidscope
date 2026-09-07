@@ -6,18 +6,45 @@ from typing import Any
 
 import pytest
 
-from video_analyzer.backends.source import (
+from vidscope.backends.source import (
     CaptionResolver,
     CaptionTrack,
     MediaAcquirer,
     SourceBackendFailure,
     SourceInspector,
+    _source_path,
 )
 
 
 def _code(exc: BaseException) -> str:
     value: Any = getattr(exc, "error", exc)
     return str(getattr(value, "code", getattr(exc, "code", "")))
+
+
+def test_windows_drive_path_is_parsed_as_local_source() -> None:
+    source = r"C:\Users\runner\fixture.mp4"
+
+    assert _source_path(source) == Path(source)
+
+
+def test_windows_drive_authority_file_uri_is_parsed_as_local_source() -> None:
+    source = "file://C:/Users/runner/fixture.mp4"
+
+    assert _source_path(source) == Path("C:/Users/runner/fixture.mp4")
+
+
+def test_non_ascii_file_authority_is_rejected() -> None:
+    with pytest.raises(SourceBackendFailure) as exc_info:
+        _source_path("file://é:/Users/runner/fixture.mp4")
+
+    assert _code(exc_info.value) == "SOURCE_NOT_ALLOWED"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics require Windows")
+def test_windows_file_uri_is_parsed_as_local_source(tmp_path: Path) -> None:
+    source_file = tmp_path / "fixture.mp4"
+
+    assert _source_path(source_file.as_uri()) == source_file
 
 
 def test_local_inspection_is_bounded_and_preserves_caption_stream_metadata(

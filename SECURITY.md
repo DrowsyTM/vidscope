@@ -2,7 +2,7 @@
 
 ## Project
 
-video-analyzer maintainers welcome responsible reports about security issues.
+vidscope maintainers welcome responsible reports about security issues.
 
 ## Supported Versions
 

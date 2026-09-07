@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       security-events: write
+      actions: read
       contents: read
     steps:
       - name: Checkout repository
@@ -46,7 +47,7 @@ jobs:
         uses: astral-sh/setup-uv@1edb52594c857e2b5b13128931090f0640537287 # v5.3.0
 
       - name: Generate requirements lock
-        run: uv export --all-extras --format requirements-txt > /tmp/requirements.txt
+        run: uv export --all-extras --no-emit-project --format requirements-txt > /tmp/requirements.txt
 
       - name: Run pip-audit
         uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0

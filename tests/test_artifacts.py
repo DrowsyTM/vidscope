@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from video_analyzer.artifacts import ArtifactStore, ArtifactStoreFailure
+from vidscope.artifacts import ArtifactStore, ArtifactStoreFailure
 
 
 def _code(exc: BaseException) -> str:
@@ -28,7 +28,7 @@ def test_store_publishes_hashed_artifact_and_atomic_manifest(tmp_path: Path) -> 
     payload = (store.run_directory / "records.jsonl").read_bytes()
     assert ref.byte_size == len(payload)
     assert ref.sha256 == hashlib.sha256(payload).hexdigest()
-    assert ref.uri == "video-analyzer://runs/run-1/artifacts/" + ref.artifact_id
+    assert ref.uri == "vidscope://runs/run-1/artifacts/" + ref.artifact_id
     assert "one" not in json.dumps(ref.model_dump(mode="json"))
     manifest = json.loads((store.run_directory / "manifest.json").read_text())
     assert (

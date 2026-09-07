@@ -12,7 +12,7 @@ from .core import AnalysisContext, VideoAnalyzerFailure
 from .core import analyze_video as core_analyze_video
 from .logging import configure_logging
 
-mcp = FastMCP("video-analyzer")
+mcp = FastMCP("vidscope")
 
 
 def _error_payload(error: AnalysisError) -> dict[str, Any]:
@@ -67,7 +67,7 @@ def analyze_video(
 
 
 @mcp.resource(
-    "video-analyzer://runs/{run_id}/artifacts/{artifact_id}{?page,offset,limit}",
+    "vidscope://runs/{run_id}/artifacts/{artifact_id}{?page,offset,limit}",
     name="read_artifact",
     mime_type="application/jsonl",
 )
@@ -78,7 +78,7 @@ def _read_artifact_resource(
     offset: int = 0,
     limit: int = 200,
 ) -> str | bytes | ArtifactStoreFailure:
-    uri = f"video-analyzer://runs/{run_id}/artifacts/{artifact_id}"
+    uri = f"vidscope://runs/{run_id}/artifacts/{artifact_id}"
     return read_artifact_resource(uri, page=page, offset=offset, limit=limit)
 
 

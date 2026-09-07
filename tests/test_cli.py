@@ -21,7 +21,7 @@ def _construct(model: type[Any], **values: Any) -> Any:
 
 
 def _request(source: Path, output: Path) -> Any:
-    from video_analyzer.contracts import AnalyzeVideoRequest, TimeRange
+    from vidscope.contracts import AnalyzeVideoRequest, TimeRange
 
     return AnalyzeVideoRequest(
         source=str(source),
@@ -32,9 +32,9 @@ def _request(source: Path, output: Path) -> Any:
 
 
 def _success_result() -> Any:
-    from video_analyzer.contracts import AnalysisResult, AnalysisSummary, ArtifactRef
+    from vidscope.contracts import AnalysisResult, AnalysisSummary, ArtifactRef
 
-    artifact_uri = "video-analyzer://runs/run-cli/artifacts/transcript"
+    artifact_uri = "vidscope://runs/run-cli/artifacts/transcript"
     artifact = _construct(
         ArtifactRef,
         artifact_id="transcript",
@@ -56,14 +56,14 @@ def _success_result() -> Any:
         summary=summary,
         stages=[],
         warnings=[],
-        manifest_uri="video-analyzer://runs/run-cli/manifest",
+        manifest_uri="vidscope://runs/run-cli/manifest",
         artifacts=[artifact],
         artifact_refs=[artifact],
     )
 
 
 def _error(code: str = "INTERNAL_STAGE_FAILED", stage: str = "transcribe") -> Any:
-    from video_analyzer.contracts import AnalysisError
+    from vidscope.contracts import AnalysisError
 
     return _construct(
         AnalysisError,
@@ -75,12 +75,12 @@ def _error(code: str = "INTERNAL_STAGE_FAILED", stage: str = "transcribe") -> An
         retryable=False,
         diagnostics={"detail": "fixture"},
         artifact_refs=[],
-        manifest_uri="video-analyzer://runs/run-cli/manifest",
+        manifest_uri="vidscope://runs/run-cli/manifest",
     )
 
 
 def _failure(error: Any) -> BaseException:
-    from video_analyzer.core import VideoAnalyzerFailure
+    from vidscope.core import VideoAnalyzerFailure
 
     return VideoAnalyzerFailure(error)
 
@@ -98,7 +98,7 @@ def _one_json_line(stdout: str) -> tuple[str, dict[str, Any]]:
 def test_cli_success_emits_one_compact_artifact_only_envelope_and_shared_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from video_analyzer.cli import app
+    from vidscope.cli import app
 
     source = tmp_path / "clip.mp4"
     source.write_bytes(b"deterministic fixture")
@@ -111,7 +111,7 @@ def test_cli_success_emits_one_compact_artifact_only_envelope_and_shared_request
         seen.append((request, context))
         return expected
 
-    monkeypatch.setattr("video_analyzer.cli.analyze_video", fake_analyze)
+    monkeypatch.setattr("vidscope.cli.analyze_video", fake_analyze)
     result = runner.invoke(
         app,
         [
@@ -140,13 +140,11 @@ def test_cli_success_emits_one_compact_artifact_only_envelope_and_shared_request
     assert line == json.dumps(payload, separators=(",", ":"))
     assert payload["ok"] is True
     assert payload["status"] == "completed"
-    assert payload["manifest_uri"].startswith("video-analyzer://")
+    assert payload["manifest_uri"].startswith("vidscope://")
     encoded = result.stdout.lower()
     assert "deterministic transcript text" not in encoded
     assert "base64" not in encoded
-    assert all(
-        "video-analyzer://" in artifact["uri"] for artifact in payload["artifacts"]
-    )
+    assert all("vidscope://" in artifact["uri"] for artifact in payload["artifacts"])
 
     assert len(seen) == 1
     request, context = seen[0]
@@ -163,7 +161,7 @@ def test_cli_success_emits_one_compact_artifact_only_envelope_and_shared_request
 def test_cli_terminal_failure_emits_typed_error_envelope_and_nonzero_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from video_analyzer.cli import app
+    from vidscope.cli import app
 
     source = tmp_path / "clip.mp4"
     source.write_bytes(b"deterministic fixture")
@@ -176,7 +174,7 @@ def test_cli_terminal_failure_emits_typed_error_envelope_and_nonzero_exit(
         calls.append(request)
         raise _failure(error)
 
-    monkeypatch.setattr("video_analyzer.cli.analyze_video", fake_analyze)
+    monkeypatch.setattr("vidscope.cli.analyze_video", fake_analyze)
     result = runner.invoke(
         app,
         [
@@ -196,7 +194,7 @@ def test_cli_terminal_failure_emits_typed_error_envelope_and_nonzero_exit(
     assert payload["status"] == "failed"
     assert payload["code"] == "INTERNAL_STAGE_FAILED"
     assert payload["stage"] == "transcribe"
-    assert payload["manifest_uri"].startswith("video-analyzer://")
+    assert payload["manifest_uri"].startswith("vidscope://")
     assert len(calls) == 1
     assert "traceback" not in result.stdout.lower()
 
@@ -204,7 +202,7 @@ def test_cli_terminal_failure_emits_typed_error_envelope_and_nonzero_exit(
 def test_cli_request_validation_is_typed_and_does_not_call_core(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from video_analyzer.cli import app
+    from vidscope.cli import app
 
     source = tmp_path / "clip.mp4"
     source.write_bytes(b"deterministic fixture")
@@ -216,7 +214,7 @@ def test_cli_request_validation_is_typed_and_does_not_call_core(
         calls.append(request)
         return _success_result()
 
-    monkeypatch.setattr("video_analyzer.cli.analyze_video", fake_analyze)
+    monkeypatch.setattr("vidscope.cli.analyze_video", fake_analyze)
     result = runner.invoke(
         app,
         [
@@ -240,7 +238,7 @@ def test_cli_request_validation_is_typed_and_does_not_call_core(
 
 
 def test_cli_mcp_invokes_mcp_main(monkeypatch: pytest.MonkeyPatch) -> None:
-    from video_analyzer.cli import app
+    from vidscope.cli import app
 
     called = False
 
@@ -248,22 +246,22 @@ def test_cli_mcp_invokes_mcp_main(monkeypatch: pytest.MonkeyPatch) -> None:
         nonlocal called
         called = True
 
-    monkeypatch.setattr("video_analyzer.mcp.main", fake_main)
+    monkeypatch.setattr("vidscope.mcp.main", fake_main)
     result = runner.invoke(app, ["mcp"])
     assert result.exit_code == 0
     assert called is True
 
 
 def test_cli_logging_flags(monkeypatch: pytest.MonkeyPatch) -> None:
-    from video_analyzer.cli import app
+    from vidscope.cli import app
 
     seen_levels: list[int] = []
 
     def fake_configure(level: int = logging.INFO) -> None:
         seen_levels.append(level)
 
-    monkeypatch.setattr("video_analyzer.logging.configure_logging", fake_configure)
-    monkeypatch.setattr("video_analyzer.mcp.main", lambda: None)
+    monkeypatch.setattr("vidscope.logging.configure_logging", fake_configure)
+    monkeypatch.setattr("vidscope.mcp.main", lambda: None)
     runner.invoke(app, ["--verbose", "mcp"])
     runner.invoke(app, ["--quiet", "mcp"])
     assert seen_levels == [logging.DEBUG, logging.WARNING]

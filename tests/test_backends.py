@@ -7,10 +7,10 @@ from typing import Any, ClassVar
 
 import pytest
 
-from video_analyzer.backends.asr import AsrBackendFailure, FasterWhisperBackend
-from video_analyzer.backends.media import FFmpegBackend, MediaBackendFailure
-from video_analyzer.backends.ocr import OcrBackendFailure, TesseractBackend
-from video_analyzer.backends.vad import SileroVadBackend
+from vidscope.backends.asr import AsrBackendFailure, FasterWhisperBackend
+from vidscope.backends.media import FFmpegBackend, MediaBackendFailure
+from vidscope.backends.ocr import OcrBackendFailure, TesseractBackend
+from vidscope.backends.vad import SileroVadBackend
 
 
 def _code(exc: BaseException) -> str:

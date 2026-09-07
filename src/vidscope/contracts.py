@@ -11,6 +11,7 @@ from __future__ import annotations
 # ruff: noqa: TRY004
 import json
 import math
+import ntpath
 import os
 import re
 from collections.abc import Mapping
@@ -18,7 +19,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from pydantic import (
     BaseModel,
@@ -46,9 +48,9 @@ _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _ARTIFACT_URI_RE = re.compile(
-    r"^video-analyzer://runs/[A-Za-z0-9._-]{1,128}/artifacts/[A-Za-z0-9._-]{1,128}$"
+    r"^vidscope://runs/[A-Za-z0-9._-]{1,128}/artifacts/[A-Za-z0-9._-]{1,128}$"
 )
-_MANIFEST_URI_RE = re.compile(r"^video-analyzer://runs/[A-Za-z0-9._-]{1,128}/manifest$")
+_MANIFEST_URI_RE = re.compile(r"^vidscope://runs/[A-Za-z0-9._-]{1,128}/manifest$")
 _LANGUAGE_RE = re.compile(
     r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,15}(?:\+[a-zA-Z0-9][a-zA-Z0-9_-]{1,15})*$"
 )
@@ -239,8 +241,28 @@ def _require_within(path: Path, root: Path, *, label: str) -> None:
         raise ValueError(f"{label} is outside the configured allowed root") from exc
 
 
+def _is_windows_drive_path(source: str) -> bool:
+    drive, tail = ntpath.splitdrive(source)
+    return bool(drive) and tail.startswith(("/", "\\"))
+
+
+def _is_windows_drive_authority(authority: str) -> bool:
+    return (
+        len(authority) == 2
+        and authority[0].isascii()
+        and authority[0].isalpha()
+        and authority[1] == ":"
+    )
+
+
 def _local_source_path(source: str) -> Path | None:
     """Return a validated local path, or ``None`` for an HTTPS source."""
+
+    if _is_windows_drive_path(source):
+        path = Path(source)
+        if not path.is_absolute():
+            raise ValueError("local source path must be absolute")
+        return path
 
     try:
         parsed = urlsplit(source)
@@ -279,10 +301,17 @@ def _local_source_path(source: str) -> Path | None:
         # A host-bearing file URI can only target this machine.  Credentials
         # were rejected above; accepting localhost keeps standard file URIs
         # useful without permitting UNC/network paths.
-        if parsed.netloc and parsed.netloc.lower() != "localhost":
+        drive_authority = _is_windows_drive_authority(parsed.netloc)
+        if (
+            parsed.netloc
+            and parsed.netloc.lower() != "localhost"
+            and not drive_authority
+        ):
             raise ValueError("file URI host is not allowed")
-        decoded = unquote(parsed.path)
-        path = Path(decoded)
+        uri_path = parsed.path
+        if drive_authority:
+            uri_path = f"{parsed.netloc}{uri_path}"
+        path = Path(url2pathname(uri_path))
         if not path.is_absolute():
             raise ValueError("file URI path must be absolute")
         return path
@@ -307,7 +336,7 @@ def _validate_existing_local_source(path: Path) -> Path:
         or not (resolved.stat().st_mode & 0o444)
     ):
         raise ValueError("local source must be a readable file")
-    allowed_root = _root_from_environment("VIDEO_ANALYZER_ALLOWED_INPUT_ROOT")
+    allowed_root = _root_from_environment("VIDSCOPE_ALLOWED_INPUT_ROOT")
     if allowed_root is not None:
         _require_within(resolved, allowed_root, label="source")
     return resolved
@@ -388,7 +417,7 @@ class AnalyzeVideoRequest(_ContractModel):
         resolved = value.resolve(strict=False)
         if value.exists() and not value.is_dir():
             raise ValueError("output_directory must be a directory")
-        allowed_root = _root_from_environment("VIDEO_ANALYZER_ALLOWED_OUTPUT_ROOT")
+        allowed_root = _root_from_environment("VIDSCOPE_ALLOWED_OUTPUT_ROOT")
         if allowed_root is not None:
             _require_within(resolved, allowed_root, label="output_directory")
         return value
@@ -507,9 +536,7 @@ class ArtifactRef(_ContractModel):
     @classmethod
     def _validate_artifact_uri(cls, value: str) -> str:
         if _ARTIFACT_URI_RE.fullmatch(value) is None:
-            raise ValueError(
-                "artifact uri is not a persisted video-analyzer artifact URI"
-            )
+            raise ValueError("artifact uri is not a persisted vidscope artifact URI")
         return value
 
     @field_validator("media_type")

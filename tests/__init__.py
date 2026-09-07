@@ -1,1 +1,1 @@
-"""Test suite package for video_analyzer."""
+"""Test suite package for vidscope."""

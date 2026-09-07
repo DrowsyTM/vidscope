@@ -3,14 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from video_analyzer.backends.source import (
+from vidscope.backends.source import (
     CaptionTrack,
     SourceInspection,
     _parse_caption_payload,
 )
-from video_analyzer.contracts import AnalyzeVideoRequest, TimeRange
-from video_analyzer.planner import Capabilities, build_execution_plan
-from video_analyzer.telemetry import compute_ocr_fps, compute_rtf, get_peak_rss_mb
+from vidscope.contracts import AnalyzeVideoRequest, TimeRange
+from vidscope.planner import Capabilities, build_execution_plan
+from vidscope.telemetry import compute_ocr_fps, compute_rtf, get_peak_rss_mb
 
 
 def test_benchmark_dag_planning(benchmark: Any, tmp_path: Path) -> None:

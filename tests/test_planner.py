@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from video_analyzer.backends.source import CaptionTrack, SourceInspection
-from video_analyzer.contracts import AnalyzeVideoRequest, TimeRange
-from video_analyzer.planner import Capabilities, build_execution_plan
+from vidscope.backends.source import CaptionTrack, SourceInspection
+from vidscope.contracts import AnalyzeVideoRequest, TimeRange
+from vidscope.planner import Capabilities, build_execution_plan
 
 
 def as_mapping(value: object) -> dict[str, Any]:

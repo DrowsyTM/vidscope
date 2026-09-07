@@ -26,5 +26,5 @@ COPY --chown=appuser:appuser . /home/appuser/app
 RUN pip install --no-cache-dir --user --index-url https://download.pytorch.org/whl/cpu torch && \
     pip install --no-cache-dir --user .[all]
 
-ENTRYPOINT ["video-analyzer"]
+ENTRYPOINT ["vidscope"]
 CMD ["mcp"]
