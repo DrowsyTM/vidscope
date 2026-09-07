@@ -48,8 +48,9 @@ _ARTIFACT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _ARTIFACT_URI_RE = re.compile(
     r"^video-analyzer://runs/[A-Za-z0-9._-]{1,128}/artifacts/[A-Za-z0-9._-]{1,128}$"
 )
-_MANIFEST_URI_RE = re.compile(
-    r"^video-analyzer://runs/[A-Za-z0-9._-]{1,128}/manifest$"
+_MANIFEST_URI_RE = re.compile(r"^video-analyzer://runs/[A-Za-z0-9._-]{1,128}/manifest$")
+_LANGUAGE_RE = re.compile(
+    r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,15}(?:\+[a-zA-Z0-9][a-zA-Z0-9_-]{1,15})*$"
 )
 
 
@@ -62,7 +63,7 @@ class _StableStringEnum(str, Enum):
     """
 
     def __str__(self) -> str:
-        return self.value
+        return str(self.value)
 
 
 class AnalysisTask(_StableStringEnum):
@@ -254,8 +255,14 @@ def _local_source_path(source: str) -> Path | None:
             _ = parsed.port
         except ValueError as exc:
             raise ValueError("source URL has an invalid port") from exc
-        if not parsed.hostname or parsed.username is not None or parsed.password is not None:
-            raise ValueError("HTTPS source must not contain credentials and must have a host")
+        if (
+            not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError(
+                "HTTPS source must not contain credentials and must have a host"
+            )
         if parsed.fragment:
             raise ValueError("source URL fragments are not allowed")
         return None
@@ -342,7 +349,7 @@ class AnalyzeVideoRequest(_ContractModel):
     source: str
     time_range: TimeRange = Field(default_factory=TimeRange)
     tasks: set[AnalysisTask] = Field(
-        default_factory=lambda: {AnalysisTask.METADATA, AnalysisTask.TRANSCRIPT}  # type: ignore[arg-type]
+        default_factory=lambda: {AnalysisTask.METADATA, AnalysisTask.TRANSCRIPT}
     )
     output_directory: Path
     language: str = "en"
@@ -353,9 +360,13 @@ class AnalyzeVideoRequest(_ContractModel):
     frame_timestamps_seconds: tuple[float, ...] | None = None
     max_frames: int = Field(default=6, gt=0, le=MAX_FRAMES)
     max_frame_width: int = Field(default=1_280, gt=0, le=MAX_FRAME_WIDTH)
-    max_download_bytes: int = Field(default=MAX_DOWNLOAD_BYTES, gt=0, le=MAX_DOWNLOAD_BYTES)
+    max_download_bytes: int = Field(
+        default=MAX_DOWNLOAD_BYTES, gt=0, le=MAX_DOWNLOAD_BYTES
+    )
     max_output_bytes: int = Field(default=MAX_OUTPUT_BYTES, gt=0, le=MAX_OUTPUT_BYTES)
-    timeout_seconds: int = Field(default=MAX_TIMEOUT_SECONDS, gt=0, le=MAX_TIMEOUT_SECONDS)
+    timeout_seconds: int = Field(
+        default=MAX_TIMEOUT_SECONDS, gt=0, le=MAX_TIMEOUT_SECONDS
+    )
     request_id: str | None = Field(default=None, max_length=MAX_REQUEST_ID_LENGTH)
 
     @field_validator("source", mode="before")
@@ -389,6 +400,10 @@ class AnalyzeVideoRequest(_ContractModel):
             raise ValueError("language must be a short non-empty string")
         if any(character.isspace() for character in value):
             raise ValueError("language must not contain whitespace")
+        if _LANGUAGE_RE.fullmatch(value) is None:
+            raise ValueError(
+                "language must match BCP-47 or alphanumeric language tokens (e.g. 'en', 'eng', 'en-US', 'eng+fra') and cannot start with a hyphen"
+            )
         return value
 
     @field_validator("request_id")
@@ -492,13 +507,19 @@ class ArtifactRef(_ContractModel):
     @classmethod
     def _validate_artifact_uri(cls, value: str) -> str:
         if _ARTIFACT_URI_RE.fullmatch(value) is None:
-            raise ValueError("artifact uri is not a persisted video-analyzer artifact URI")
+            raise ValueError(
+                "artifact uri is not a persisted video-analyzer artifact URI"
+            )
         return value
 
     @field_validator("media_type")
     @classmethod
     def _validate_media_type(cls, value: str) -> str:
-        if not value or len(value) > 128 or any(character.isspace() for character in value):
+        if (
+            not value
+            or len(value) > 128
+            or any(character.isspace() for character in value)
+        ):
             raise ValueError("media_type must be a short non-empty token")
         return value
 
@@ -532,7 +553,11 @@ class AnalysisError(_ContractModel):
     @field_validator("stage")
     @classmethod
     def _validate_stage(cls, value: str) -> str:
-        if not value or len(value) > 128 or any(character.isspace() for character in value):
+        if (
+            not value
+            or len(value) > 128
+            or any(character.isspace() for character in value)
+        ):
             raise ValueError("stage must be a short identifier")
         return value
 
@@ -581,7 +606,7 @@ class StageRecord(_ContractModel):
     """Persisted status and bounded settings for one execution stage."""
 
     name: str = ""
-    status: StageStatus = StageStatus.PLANNED  # type: ignore[assignment]
+    status: StageStatus = StageStatus.PLANNED
     dependencies: list[str] = Field(default_factory=list)
     start_timestamp: datetime | str | None = None
     end_timestamp: datetime | str | None = None
@@ -599,7 +624,9 @@ class StageRecord(_ContractModel):
             raise ValueError("stage name must be a short identifier")
         return value
 
-    @field_validator("dependencies", "input_artifact_ids", "output_artifact_ids", mode="before")
+    @field_validator(
+        "dependencies", "input_artifact_ids", "output_artifact_ids", mode="before"
+    )
     @classmethod
     def _validate_ids(cls, value: Any) -> list[str]:
         return _bounded_strings(value, label="stage identifiers")
@@ -661,7 +688,11 @@ class AnalysisPlan(_ContractModel):
             raise ValueError("effective_limits must be a mapping")
         result: dict[str, int] = {}
         for key, item in value.items():
-            if not isinstance(key, str) or not isinstance(item, int) or isinstance(item, bool):
+            if (
+                not isinstance(key, str)
+                or not isinstance(item, int)
+                or isinstance(item, bool)
+            ):
                 raise ValueError("effective limits must contain integer values")
             result[key] = item
         return result
@@ -725,6 +756,17 @@ class AnalysisSummary(_ContractModel):
         return _clean_mapping(value, label="summary metadata")
 
 
+class AnalysisMetrics(_ContractModel):
+    """Execution telemetry and throughput metrics."""
+
+    total_elapsed_ms: float = Field(default=0.0, ge=0)
+    peak_rss_mb: float = Field(default=0.0, ge=0)
+    rtf: float | None = Field(default=None, ge=0)
+    ocr_fps: float | None = Field(default=None, ge=0)
+    download_throughput_mbps: float | None = Field(default=None, ge=0)
+    stage_elapsed_ms: dict[str, float] = Field(default_factory=dict)
+
+
 class AnalysisResult(_ContractModel):
     """Successful analysis envelope, with completed or useful partial status."""
 
@@ -733,6 +775,7 @@ class AnalysisResult(_ContractModel):
     summary: AnalysisSummary | None = None
     stages: list[StageRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    metrics: AnalysisMetrics | None = None
     manifest_uri: str | None = None
     artifacts: list[ArtifactRef] = Field(default_factory=list)
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
@@ -766,6 +809,7 @@ class AnalysisResult(_ContractModel):
             self.artifacts = list(self.artifact_refs)
         return self
 
+
 type AnalysisResponse = Annotated[
     AnalysisResult | AnalysisError, Field(discriminator="ok")
 ]
@@ -775,6 +819,7 @@ type AnalysisResponse = Annotated[
 AnalysisError.model_rebuild()
 StageRecord.model_rebuild()
 AnalysisPlan.model_rebuild()
+AnalysisMetrics.model_rebuild()
 AnalysisResult.model_rebuild()
 
 
@@ -789,6 +834,7 @@ __all__ = [
     "AnalysisError",
     "AnalysisErrorCode",
     "AnalysisErrorStatus",
+    "AnalysisMetrics",
     "AnalysisPlan",
     "AnalysisResponse",
     "AnalysisResult",

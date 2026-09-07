@@ -14,7 +14,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -60,7 +60,10 @@ def _block_network_and_cloud_imports(monkeypatch: pytest.MonkeyPatch) -> None:
         fromlist: tuple[str, ...] = (),
         level: int = 0,
     ) -> Any:
-        if any(name == prefix or name.startswith(f"{prefix}.") for prefix in forbidden_prefixes):
+        if any(
+            name == prefix or name.startswith(f"{prefix}.")
+            for prefix in forbidden_prefixes
+        ):
             raise AssertionError(f"unexpected cloud provider import: {name}")
         return real_import(name, globals, locals, fromlist, level)
 
@@ -79,6 +82,7 @@ class EventLog:
     url_env_value: str | None = None
     cloud_calls: list[str] = field(default_factory=list)
     published_media_ref: Any | None = None
+
     def run_dir(self, request: AnalyzeVideoRequest) -> Path:
         request_id = request.request_id or ""
         return request.output_directory / request_id
@@ -99,7 +103,9 @@ class FakeSourceInspector:
     on_inspect: Callable[[], None] | None = None
     is_url: bool = False
 
-    def inspect(self, request: AnalyzeVideoRequest, *args: Any, **kwargs: Any) -> SourceInspection:
+    def inspect(
+        self, request: AnalyzeVideoRequest, *args: Any, **kwargs: Any
+    ) -> SourceInspection:
         self.log.events.append("inspect_source")
         # Planning belongs after inspection, not before it.
         assert not (self.log.run_dir(request) / "plan.json").exists()
@@ -110,7 +116,9 @@ class FakeSourceInspector:
             is_url=self.is_url,
             duration_seconds=4.0,
             caption_tracks=self.tracks,
-            formats=[{"format_id": "fixture", "ext": "mp4", "width": 320, "height": 180}],
+            formats=[
+                {"format_id": "fixture", "ext": "mp4", "width": 320, "height": 180}
+            ],
             metadata={"title": "deterministic fixture"},
         )
 
@@ -120,7 +128,13 @@ class FakeCaptionResolver:
     log: EventLog
     track: CaptionTrack | None
 
-    def resolve(self, inspection: SourceInspection, request: AnalyzeVideoRequest, *args: Any, **kwargs: Any) -> CaptionTrack | None:
+    def resolve(
+        self,
+        inspection: SourceInspection,
+        request: AnalyzeVideoRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> CaptionTrack | None:
         self.log.events.append("resolve_captions")
         return self.track
 
@@ -142,7 +156,9 @@ class FakeMediaAcquirer:
         run_dir = self.log.run_dir(request)
         plan = run_dir / "plan.json"
         self.log.plan_seen_at_media = plan.exists()
-        self.log.plan_mtime_at_media = plan.stat().st_mtime_ns if plan.exists() else None
+        self.log.plan_mtime_at_media = (
+            plan.stat().st_mtime_ns if plan.exists() else None
+        )
         self.log.url_env_value = os.environ.get("YTDLP_IGNORE_CONFIG")
         if inspection.is_url:
             # Assert the source-layer boundary, not merely a process-wide
@@ -234,7 +250,9 @@ class FakeAsrBackend:
     empty: bool = False
     fail: bool = False
 
-    def transcribe(self, audio: Any, request: AnalyzeVideoRequest, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def transcribe(
+        self, audio: Any, request: AnalyzeVideoRequest, *args: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         self.log.events.append("transcribe")
         self.log.capture_manifest(request)
         if self.fail:
@@ -249,14 +267,23 @@ class FakeAsrBackend:
                     "words": [],
                 }
             )
-        return {"segments": segments, "metadata": {"language": request.language, "provider": "fake-local"}}
+        return {
+            "segments": segments,
+            "metadata": {"language": request.language, "provider": "fake-local"},
+        }
 
 
 @dataclass
 class FakeVadBackend:
     log: EventLog
 
-    def detect(self, audio: Any, request: AnalyzeVideoRequest | None = None, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def detect(
+        self,
+        audio: Any,
+        request: AnalyzeVideoRequest | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         self.log.events.append("vad")
         if request is not None:
             self.log.capture_manifest(request)
@@ -271,7 +298,9 @@ class FakeOcrBackend:
     log: EventLog
     fail: bool = False
 
-    def recognize(self, frame: Any, language: str = "eng", *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def recognize(
+        self, frame: Any, language: str = "eng", *args: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         self.log.events.append("ocr")
         request = _request_argument(args, kwargs)
         if request is not None:
@@ -279,12 +308,23 @@ class FakeOcrBackend:
         if self.fail:
             raise RuntimeError("fixture OCR failure")
         return {
-            "rows": [{"text": "fixture OCR", "confidence": 98.0, "left": 1, "top": 2, "width": 20, "height": 8}],
+            "rows": [
+                {
+                    "text": "fixture OCR",
+                    "confidence": 98.0,
+                    "left": 1,
+                    "top": 2,
+                    "width": 20,
+                    "height": 8,
+                }
+            ],
             "metadata": {"provider": "fake-local"},
         }
 
 
-def _request_argument(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> AnalyzeVideoRequest | None:
+def _request_argument(
+    args: tuple[Any, ...], kwargs: Mapping[str, Any]
+) -> AnalyzeVideoRequest | None:
     for value in (*args, *kwargs.values()):
         if isinstance(value, AnalyzeVideoRequest):
             return value
@@ -365,7 +405,7 @@ def _run_dir(request: AnalyzeVideoRequest) -> Path:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def _stage_records(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -402,14 +442,18 @@ def _artifact_refs(value: Any) -> list[dict[str, Any]]:
     return found
 
 
-def _assert_bounded_result(result: Any, *, absent_markers: tuple[str, ...]) -> dict[str, Any]:
+def _assert_bounded_result(
+    result: Any, *, absent_markers: tuple[str, ...]
+) -> dict[str, Any]:
     dumped = _dump(result)
     serialized = json.dumps(dumped, sort_keys=True)
     assert len(serialized.encode("utf-8")) < 16_384
     for marker in absent_markers:
         assert marker not in serialized
     refs = _artifact_refs(dumped)
-    assert refs, "successful analysis must return artifact references, not inline payloads"
+    assert refs, (
+        "successful analysis must return artifact references, not inline payloads"
+    )
     for ref in refs:
         assert ARTIFACT_URI.fullmatch(ref["uri"])
         assert SHA256.fullmatch(ref["sha256"])
@@ -461,7 +505,9 @@ def _assert_artifacts_resolve(
         assert ref["byte_size"] == persisted["byte_size"]
 
 
-def test_plan_is_persisted_before_media_and_manifest_updates_are_atomic(tmp_path: Path) -> None:
+def test_plan_is_persisted_before_media_and_manifest_updates_are_atomic(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "fixture.mp4"
     source.write_bytes(b"small deterministic media placeholder")
     log = EventLog(tmp_path)
@@ -492,7 +538,14 @@ def test_plan_is_persisted_before_media_and_manifest_updates_are_atomic(tmp_path
     assert plan.stat().st_mtime_ns <= log.plan_mtime_at_media
 
     records = _stage_records(_read_json(manifest))
-    for name in ("validate_source", "inspect_source", "persist_plan", "acquire_media", "probe", "extract_frames"):
+    for name in (
+        "validate_source",
+        "inspect_source",
+        "persist_plan",
+        "acquire_media",
+        "probe",
+        "extract_frames",
+    ):
         assert _stage(_read_json(manifest), name)["status"] == "completed"
     assert len(log.manifest_snapshots) >= 2
     assert len(set(log.manifest_snapshots)) >= 2
@@ -500,17 +553,24 @@ def test_plan_is_persisted_before_media_and_manifest_updates_are_atomic(tmp_path
     for snapshot in log.manifest_snapshots:
         parsed = json.loads(snapshot)
         assert isinstance(parsed, dict)
-        snapshot_statuses.append({record["status"] for record in _stage_records(parsed)})
+        snapshot_statuses.append(
+            {record["status"] for record in _stage_records(parsed)}
+        )
     assert any("running" in statuses for statuses in snapshot_statuses)
     assert not list(run_dir.glob("manifest.json.*"))
     terminal_statuses = {"completed", "skipped", "failed", "cancelled", "timed_out"}
     assert records and all(record["status"] in terminal_statuses for record in records)
-    assert all(record.get("start_timestamp") and record.get("end_timestamp") for record in records)
+    assert all(
+        record.get("start_timestamp") and record.get("end_timestamp")
+        for record in records
+    )
     _assert_artifacts_resolve(request, result, _read_json(manifest))
 
 
 @pytest.mark.parametrize("kind", ["manual", "automatic"])
-def test_caption_transcript_is_artifact_only_with_complete_hash_metadata(tmp_path: Path, kind: str) -> None:
+def test_caption_transcript_is_artifact_only_with_complete_hash_metadata(
+    tmp_path: Path, kind: str
+) -> None:
     source = tmp_path / "fixture.mp4"
     source.write_bytes(b"caption-only source")
     log = EventLog(tmp_path)
@@ -522,11 +582,16 @@ def test_caption_transcript_is_artifact_only_with_complete_hash_metadata(tmp_pat
     media_backend.work_dir.mkdir()
     request = _request(tmp_path, source, tasks={"metadata", "transcript"})
 
-    result = analyze_video(request, context=_context(log, inspector, resolver, media, media_backend))
+    result = analyze_video(
+        request, context=_context(log, inspector, resolver, media, media_backend)
+    )
 
     dumped = _assert_bounded_result(
         result,
-        absent_markers=("caption body must remain in the artifact", base64.b64encode(b"caption body").decode()),
+        absent_markers=(
+            "caption body must remain in the artifact",
+            base64.b64encode(b"caption body").decode(),
+        ),
     )
     assert dumped["ok"] is True
     assert dumped["status"] == "completed"
@@ -535,7 +600,9 @@ def test_caption_transcript_is_artifact_only_with_complete_hash_metadata(tmp_pat
     run_dir = _run_dir(request)
     transcript = run_dir / "transcript.jsonl"
     assert transcript.exists()
-    lines = [json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()]
+    lines = [
+        json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()
+    ]
     assert lines and lines[0]["text"] == "caption body must remain in the artifact"
     expected_hash = hashlib.sha256(transcript.read_bytes()).hexdigest()
     refs = _artifact_refs(dumped)
@@ -550,7 +617,9 @@ def test_caption_transcript_is_artifact_only_with_complete_hash_metadata(tmp_pat
     _assert_artifacts_resolve(request, result, manifest)
 
 
-def test_missing_captions_use_bounded_local_asr_and_vad_fallback(tmp_path: Path) -> None:
+def test_missing_captions_use_bounded_local_asr_and_vad_fallback(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "fixture.mp4"
     source.write_bytes(b"asr source")
     log = EventLog(tmp_path)
@@ -559,15 +628,25 @@ def test_missing_captions_use_bounded_local_asr_and_vad_fallback(tmp_path: Path)
     media = FakeMediaAcquirer(log, source)
     media_backend = FakeMediaBackend(log, tmp_path / "media-work")
     media_backend.work_dir.mkdir()
-    request = _request(tmp_path, source, tasks={"metadata", "transcript"}, asr_enabled=True)
+    request = _request(
+        tmp_path, source, tasks={"metadata", "transcript"}, asr_enabled=True
+    )
 
-    result = analyze_video(request, context=_context(log, inspector, resolver, media, media_backend))
+    result = analyze_video(
+        request, context=_context(log, inspector, resolver, media, media_backend)
+    )
 
-    dumped = _assert_bounded_result(result, absent_markers=("asr body must remain in the artifact",))
+    dumped = _assert_bounded_result(
+        result, absent_markers=("asr body must remain in the artifact",)
+    )
     assert dumped["status"] == "completed"
     for name in ("acquire_media", "probe", "extract_audio", "transcribe", "vad"):
         assert name in log.events
-    assert log.events.index("acquire_media") < log.events.index("probe") < log.events.index("extract_audio")
+    assert (
+        log.events.index("acquire_media")
+        < log.events.index("probe")
+        < log.events.index("extract_audio")
+    )
     assert log.events.index("extract_audio") < log.events.index("transcribe")
     manifest = _read_json(_run_dir(request) / "manifest.json")
     for name in ("acquire_media", "probe", "extract_audio", "transcribe", "vad"):
@@ -575,7 +654,9 @@ def test_missing_captions_use_bounded_local_asr_and_vad_fallback(tmp_path: Path)
     assert "cloud" not in " ".join(log.cloud_calls).lower()
 
 
-def test_no_caption_transcript_and_frames_keep_media_concurrency_bounded(tmp_path: Path) -> None:
+def test_no_caption_transcript_and_frames_keep_media_concurrency_bounded(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "combined-source.mp4"
     source.write_bytes(b"combined transcript and frames source")
     log = EventLog(tmp_path)
@@ -592,20 +673,32 @@ def test_no_caption_transcript_and_frames_keep_media_concurrency_bounded(tmp_pat
         request_id="combined-run",
     )
 
-    result = analyze_video(request, context=_context(log, inspector, resolver, media, media_backend))
+    result = analyze_video(
+        request, context=_context(log, inspector, resolver, media, media_backend)
+    )
 
-    dumped = _assert_bounded_result(result, absent_markers=("asr body must remain in the artifact",))
+    dumped = _assert_bounded_result(
+        result, absent_markers=("asr body must remain in the artifact",)
+    )
     assert dumped["status"] == "completed"
     assert media_backend.max_active <= 2
-    assert {"acquire_media", "probe", "extract_audio", "transcribe", "vad", "extract_frames"} <= set(log.events)
+    assert {
+        "acquire_media",
+        "probe",
+        "extract_audio",
+        "transcribe",
+        "vad",
+        "extract_frames",
+    } <= set(log.events)
     manifest = _read_json(_run_dir(request) / "manifest.json")
     for name in ("transcribe", "vad", "extract_frames"):
         assert _stage(manifest, name)["status"] == "completed"
     _assert_artifacts_resolve(request, result, manifest)
 
 
-
-def test_ocr_request_extracts_frames_then_persists_nonempty_ocr_artifact(tmp_path: Path) -> None:
+def test_ocr_request_extracts_frames_then_persists_nonempty_ocr_artifact(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "ocr-source.mp4"
     source.write_bytes(b"ocr source")
     log = EventLog(tmp_path)
@@ -614,9 +707,13 @@ def test_ocr_request_extracts_frames_then_persists_nonempty_ocr_artifact(tmp_pat
     media = FakeMediaAcquirer(log, source)
     media_backend = FakeMediaBackend(log, tmp_path / "media-work")
     media_backend.work_dir.mkdir()
-    request = _request(tmp_path, source, tasks={"metadata", "ocr"}, request_id="ocr-run")
+    request = _request(
+        tmp_path, source, tasks={"metadata", "ocr"}, request_id="ocr-run"
+    )
 
-    result = analyze_video(request, context=_context(log, inspector, resolver, media, media_backend))
+    result = analyze_video(
+        request, context=_context(log, inspector, resolver, media, media_backend)
+    )
 
     dumped = _assert_bounded_result(result, absent_markers=("fixture OCR",))
     assert dumped["status"] == "completed"
@@ -624,8 +721,12 @@ def test_ocr_request_extracts_frames_then_persists_nonempty_ocr_artifact(tmp_pat
     run_dir = _run_dir(request)
     ocr_path = run_dir / "ocr.jsonl"
     assert ocr_path.is_file()
-    ocr_lines = [json.loads(line) for line in ocr_path.read_text(encoding="utf-8").splitlines()]
-    assert ocr_lines and any("fixture OCR" in json.dumps(line, sort_keys=True) for line in ocr_lines)
+    ocr_lines = [
+        json.loads(line) for line in ocr_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert ocr_lines and any(
+        "fixture OCR" in json.dumps(line, sort_keys=True) for line in ocr_lines
+    )
     manifest = _read_json(run_dir / "manifest.json")
     assert _stage(manifest, "extract_frames")["status"] == "completed"
     assert _stage(manifest, "ocr")["status"] == "completed"
@@ -650,7 +751,9 @@ def test_optional_visual_failure_returns_useful_partial_result(tmp_path: Path) -
     media_backend.work_dir.mkdir()
     request = _request(tmp_path, source, tasks={"metadata", "transcript", "frames"})
 
-    result = analyze_video(request, context=_context(log, inspector, resolver, media, media_backend))
+    result = analyze_video(
+        request, context=_context(log, inspector, resolver, media, media_backend)
+    )
 
     dumped = _dump(result)
     assert dumped["ok"] is True
@@ -677,7 +780,12 @@ def test_terminal_stage_error_raises_with_manifest_reference(tmp_path: Path) -> 
     asr = FakeAsrBackend(log, fail=True)
 
     with pytest.raises(VideoAnalyzerFailure) as raised:
-        analyze_video(request, context=_context(log, inspector, resolver, media, media_backend, asr_backend=asr))
+        analyze_video(
+            request,
+            context=_context(
+                log, inspector, resolver, media, media_backend, asr_backend=asr
+            ),
+        )
 
     failure = raised.value
     assert failure.error.code == "INTERNAL_STAGE_FAILED"
@@ -719,7 +827,10 @@ def test_zero_byte_transcript_is_a_typed_failure_not_success(tmp_path: Path) -> 
     assert raised.value.manifest_uri
     refs = _artifact_refs(_read_json(_run_dir(request) / "manifest.json"))
     assert all(ref["byte_size"] > 0 for ref in refs)
-    assert _stage(_read_json(_run_dir(request) / "manifest.json"), "transcribe")["status"] == "failed"
+    assert (
+        _stage(_read_json(_run_dir(request) / "manifest.json"), "transcribe")["status"]
+        == "failed"
+    )
 
 
 def test_zero_byte_frame_is_a_typed_failure_not_success(tmp_path: Path) -> None:
@@ -734,7 +845,9 @@ def test_zero_byte_frame_is_a_typed_failure_not_success(tmp_path: Path) -> None:
     request = _request(tmp_path, source, tasks={"metadata", "frames"})
 
     with pytest.raises(VideoAnalyzerFailure) as raised:
-        analyze_video(request, context=_context(log, inspector, resolver, media, media_backend))
+        analyze_video(
+            request, context=_context(log, inspector, resolver, media, media_backend)
+        )
 
     assert raised.value.error.code == "INTERNAL_STAGE_FAILED"
     assert raised.value.error.stage == "extract_frames"
@@ -744,7 +857,9 @@ def test_zero_byte_frame_is_a_typed_failure_not_success(tmp_path: Path) -> None:
     assert not any(ref["byte_size"] == 0 for ref in _artifact_refs(manifest))
 
 
-def test_cancellation_after_inspection_maps_to_cancelled_with_manifest(tmp_path: Path) -> None:
+def test_cancellation_after_inspection_maps_to_cancelled_with_manifest(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "fixture.mp4"
     source.write_bytes(b"cancel source")
     log = EventLog(tmp_path)
@@ -759,7 +874,14 @@ def test_cancellation_after_inspection_maps_to_cancelled_with_manifest(tmp_path:
     with pytest.raises(VideoAnalyzerFailure) as raised:
         analyze_video(
             request,
-            context=_context(log, inspector, resolver, media, media_backend, cancel_event=cancel_event),
+            context=_context(
+                log,
+                inspector,
+                resolver,
+                media,
+                media_backend,
+                cancel_event=cancel_event,
+            ),
         )
 
     assert raised.value.error.code == "CANCELLED"
@@ -827,7 +949,9 @@ def test_output_limit_is_typed_and_preserves_partial_manifest(tmp_path: Path) ->
     )
 
     with pytest.raises(VideoAnalyzerFailure) as raised:
-        analyze_video(request, context=_context(log, inspector, resolver, media, media_backend))
+        analyze_video(
+            request, context=_context(log, inspector, resolver, media, media_backend)
+        )
 
     assert raised.value.error.code == "OUTPUT_LIMIT_EXCEEDED"
     assert raised.value.manifest_uri
@@ -837,10 +961,14 @@ def test_output_limit_is_typed_and_preserves_partial_manifest(tmp_path: Path) ->
     published_refs = _artifact_refs(manifest.get("artifacts", {}))
     assert all(ref["byte_size"] <= request.max_output_bytes for ref in published_refs)
     transcript_files = list(_run_dir(request).rglob("transcript.jsonl"))
-    assert all(path.stat().st_size <= request.max_output_bytes for path in transcript_files)
+    assert all(
+        path.stat().st_size <= request.max_output_bytes for path in transcript_files
+    )
 
 
-def test_url_acquisition_sets_ytdlp_ignore_config_and_never_calls_cloud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_url_acquisition_sets_ytdlp_ignore_config_and_never_calls_cloud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "fixture.mp4"
     source.write_bytes(b"URL acquisition fixture")
     log = EventLog(tmp_path)
@@ -857,9 +985,16 @@ def test_url_acquisition_sets_ytdlp_ignore_config_and_never_calls_cloud(tmp_path
     )
     monkeypatch.delenv("YTDLP_IGNORE_CONFIG", raising=False)
 
-    result = analyze_video(request, context=_context(log, inspector, resolver, media, media_backend))
+    result = analyze_video(
+        request, context=_context(log, inspector, resolver, media, media_backend)
+    )
 
     assert _dump(result)["ok"] is True
     assert log.url_env_value == "1"
     assert log.cloud_calls == []
-    assert _stage(_read_json(_run_dir(request) / "manifest.json"), "acquire_media")["status"] == "completed"
+    assert (
+        _stage(_read_json(_run_dir(request) / "manifest.json"), "acquire_media")[
+            "status"
+        ]
+        == "completed"
+    )

@@ -14,15 +14,27 @@ app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 
 @app.callback()
-def _root() -> None:
+def _root(
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Enable verbose debug logging to stderr."),
+    ] = False,
+    quiet: Annotated[
+        bool, typer.Option("--quiet", "-q", help="Suppress non-error logging output.")
+    ] = False,
+) -> None:
     """Video analysis command group."""
+    import logging
+
+    from .logging import configure_logging
+
+    level = logging.WARNING if quiet else (logging.DEBUG if verbose else logging.INFO)
+    configure_logging(level=level)
     return
 
+
 def _emit(value: object) -> None:
-    if hasattr(value, "model_dump"):
-        payload = value.model_dump(mode="json")
-    else:
-        payload = value
+    payload = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
     typer.echo(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
@@ -37,18 +49,30 @@ def _invalid_request(error: BaseException) -> AnalysisError:
 
 @app.command("analyze-video")
 def analyze_video_command(
-    source: Annotated[str, typer.Option("--source", help="Local path or HTTPS video URL.")],
+    source: Annotated[
+        str, typer.Option("--source", help="Local path or HTTPS video URL.")
+    ],
     out: Annotated[Path, typer.Option("--out", help="Output directory.")],
     start_seconds: Annotated[float, typer.Option("--start-seconds")] = 0.0,
     end_seconds: Annotated[float, typer.Option("--end-seconds")] = 180.0,
-    task: Annotated[list[str] | None, typer.Option("--task", help="Task; repeat for multiple tasks.")] = None,
-    frame_timestamp: Annotated[list[float] | None, typer.Option("--frame-timestamp", help="Explicit frame timestamp; repeatable.")] = None,
+    task: Annotated[
+        list[str] | None,
+        typer.Option("--task", help="Task; repeat for multiple tasks."),
+    ] = None,
+    frame_timestamp: Annotated[
+        list[float] | None,
+        typer.Option("--frame-timestamp", help="Explicit frame timestamp; repeatable."),
+    ] = None,
     language: Annotated[str, typer.Option("--language")] = "en",
-    caption_preference: Annotated[str, typer.Option("--caption-preference")] = "manual_then_automatic_then_asr",
+    caption_preference: Annotated[
+        str, typer.Option("--caption-preference")
+    ] = "manual_then_automatic_then_asr",
     asr_enabled: Annotated[bool, typer.Option("--asr-enabled/--no-asr")] = True,
     max_frames: Annotated[int, typer.Option("--max-frames")] = 6,
     max_frame_width: Annotated[int, typer.Option("--max-frame-width")] = 1_280,
-    max_download_bytes: Annotated[int, typer.Option("--max-download-bytes")] = 268_435_456,
+    max_download_bytes: Annotated[
+        int, typer.Option("--max-download-bytes")
+    ] = 268_435_456,
     max_output_bytes: Annotated[int, typer.Option("--max-output-bytes")] = 67_108_864,
     timeout_seconds: Annotated[int, typer.Option("--timeout-seconds")] = 600,
     request_id: Annotated[str | None, typer.Option("--request-id")] = None,
@@ -56,13 +80,17 @@ def analyze_video_command(
     try:
         values: dict[str, Any] = {
             "source": source,
-            "time_range": TimeRange(start_seconds=start_seconds, end_seconds=end_seconds),
+            "time_range": TimeRange(
+                start_seconds=start_seconds, end_seconds=end_seconds
+            ),
             "tasks": set(task or ()) if task else {"metadata", "transcript"},
             "output_directory": out.expanduser().resolve(strict=False),
             "language": language,
             "caption_preference": caption_preference,
             "asr_enabled": asr_enabled,
-            "frame_timestamps_seconds": tuple(frame_timestamp or ()) if frame_timestamp else None,
+            "frame_timestamps_seconds": tuple(frame_timestamp or ())
+            if frame_timestamp
+            else None,
             "max_frames": max_frames,
             "max_frame_width": max_frame_width,
             "max_download_bytes": max_download_bytes,
@@ -90,6 +118,14 @@ def analyze_video_command(
         )
         raise typer.Exit(code=1) from exc
     _emit(result)
+
+
+@app.command("mcp")
+def mcp_command() -> None:
+    """Run FastMCP server over standard I/O."""
+    from .mcp import main
+
+    main()
 
 
 if __name__ == "__main__":

@@ -14,7 +14,9 @@ import pytest
 def _construct(model: type[Any], **values: Any) -> Any:
     """Construct a contract model without coupling adapter tests to defaults."""
     fields = getattr(model, "model_fields", {})
-    selected = {name: value for name, value in values.items() if not fields or name in fields}
+    selected = {
+        name: value for name, value in values.items() if not fields or name in fields
+    }
     return model.model_construct(**selected)
 
 
@@ -205,7 +207,9 @@ def _tool_annotation(tool: Any, name: str) -> Any:
         return None
     if isinstance(annotations, Mapping):
         return annotations.get(name, annotations.get(_snake_annotation_name(name)))
-    return getattr(annotations, name, getattr(annotations, _snake_annotation_name(name), None))
+    return getattr(
+        annotations, name, getattr(annotations, _snake_annotation_name(name), None)
+    )
 
 
 def test_mcp_registers_only_analyze_video_with_non_mutating_annotations() -> None:
@@ -256,7 +260,11 @@ def test_mcp_success_returns_shared_result_unchanged_and_compact_artifacts(
     assert payload["ok"] is True
     assert payload["status"] == "completed"
     assert payload["manifest_uri"].startswith("video-analyzer://")
-    assert all(item["uri"].startswith("video-analyzer://") for item in payload["artifacts"])
+    assert all(
+        item["uri"].startswith("video-analyzer://") for item in payload["artifacts"]
+    )
+
+
 def test_mcp_terminal_failure_is_error_tool_result_with_shared_error_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -308,7 +316,9 @@ def test_mcp_empty_transcript_is_not_a_successful_tool_result(
     assert returned.structured_content["ok"] is False
     assert returned.structured_content["status"] != "completed"
     assert returned.structured_content["stage"] == "transcribe"
-    assert returned.structured_content["message"] == "empty transcript artifact rejected"
+    assert (
+        returned.structured_content["message"] == "empty transcript artifact rejected"
+    )
     assert returned.structured_content["code"] == "INTERNAL_STAGE_FAILED"
     assert returned.is_error is True
     expected = error.model_dump(mode="json")
@@ -340,6 +350,7 @@ def test_mcp_empty_transcript_returns_tool_error(
 
     assert isinstance(returned, ToolResult)
     assert returned.is_error is True
+    assert returned.structured_content is not None
     assert returned.structured_content["ok"] is False
     assert returned.structured_content["stage"] == "transcribe"
     assert returned.structured_content["code"] == "INTERNAL_STAGE_FAILED"
@@ -395,14 +406,21 @@ def _write_resource_fixture(root: Path) -> str:
     run_id = "run-resource"
     artifact_id = "transcript"
     uri = f"video-analyzer://runs/{run_id}/artifacts/{artifact_id}"
-    records = "".join(json.dumps({"index": index, "text": f"segment-{index}"}) + "\n" for index in range(450))
+    records = "".join(
+        json.dumps({"index": index, "text": f"segment-{index}"}) + "\n"
+        for index in range(450)
+    )
     digest = hashlib.sha256(records.encode()).hexdigest()
     run_dir = root / run_id
     artifact_dir = run_dir / "artifacts"
     artifact_dir.mkdir(parents=True)
     # Keep the canonical path and compatibility copies so the fixture exercises
     # URI resolution rather than relying on a filesystem path being accepted.
-    for path in (artifact_dir / "transcript.jsonl", artifact_dir / artifact_id, run_dir / "transcript.jsonl"):
+    for path in (
+        artifact_dir / "transcript.jsonl",
+        artifact_dir / artifact_id,
+        run_dir / "transcript.jsonl",
+    ):
         path.write_text(records, encoding="utf-8")
     reference = {
         "artifact_id": artifact_id,

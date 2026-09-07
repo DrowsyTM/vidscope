@@ -149,7 +149,13 @@ def test_no_captions_schedule_bounded_asr_and_vad_when_asr_is_enabled(
     plan = build_execution_plan(request, make_inspection(), make_capabilities())
     stage_names = set(stages_by_name(plan))
 
-    assert {"acquire_media", "probe", "extract_audio", "vad", "transcribe"} <= stage_names
+    assert {
+        "acquire_media",
+        "probe",
+        "extract_audio",
+        "vad",
+        "transcribe",
+    } <= stage_names
     assert "captions" not in stage_names
     assert "cloud" not in {name.lower() for name in stage_names}
 
@@ -163,7 +169,9 @@ def test_no_captions_fail_without_enabled_asr_before_media_work(tmp_path: Path) 
     assert error_code(exc_info.value) == "CAPTIONS_UNAVAILABLE"
 
 
-def test_caption_transcript_does_not_add_vad_without_an_asr_fallback(tmp_path: Path) -> None:
+def test_caption_transcript_does_not_add_vad_without_an_asr_fallback(
+    tmp_path: Path,
+) -> None:
     request = make_request(tmp_path, {"transcript"})
     plan = build_execution_plan(
         request,
@@ -268,8 +276,7 @@ def test_all_requested_stages_have_exact_bounded_dag_and_effective_limits(
         "ocr": {"extract_frames"},
     }
     assert {
-        name: dependencies(stage)
-        for name, stage in stage_map.items()
+        name: dependencies(stage) for name, stage in stage_map.items()
     } == expected_dependencies
 
     limits = as_mapping(plan.effective_limits)
@@ -304,10 +311,12 @@ def test_uniform_frame_timestamps_are_capped_by_max_frames(tmp_path: Path) -> No
     assert len(timestamps) == 3
     assert all(20.0 < timestamp < 80.0 for timestamp in timestamps)
     assert timestamps == tuple(sorted(timestamps))
-    assert timestamps[1] - timestamps[0] == pytest.approx(
-        timestamps[2] - timestamps[1]
-    )
-def test_caption_selection_prefers_requested_language_and_manual_kind(tmp_path: Path) -> None:
+    assert timestamps[1] - timestamps[0] == pytest.approx(timestamps[2] - timestamps[1])
+
+
+def test_caption_selection_prefers_requested_language_and_manual_kind(
+    tmp_path: Path,
+) -> None:
     request = make_request(tmp_path, {"transcript"}, language="en")
     inspection = make_inspection(
         CaptionTrack(
@@ -374,6 +383,7 @@ def test_plan_stage_order_is_deterministic_for_task_set_order(tmp_path: Path) ->
         return [str(stage.name) for stage in values]
 
     assert order(first) == order(second)
+
 
 def test_manual_locale_match_beats_exact_automatic_match(tmp_path: Path) -> None:
     request = make_request(tmp_path, {"transcript"}, language="en")

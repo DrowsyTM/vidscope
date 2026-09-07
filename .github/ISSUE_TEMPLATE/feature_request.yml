@@ -1,0 +1,28 @@
+name: Feature Request
+description: Suggest an improvement or new capability for this project.
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Describe the problem, the people affected, and the outcome you want.
+        Do not include credentials or other private information.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: What problem would this change solve? Include relevant context.
+      placeholder: Explain the use case and who benefits.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution or Design
+      description: Describe the behavior or workflow you would like.
+      placeholder: Describe a possible solution.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe alternatives or workarounds you have considered.
+      placeholder: List alternatives and their trade-offs.

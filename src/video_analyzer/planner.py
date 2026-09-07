@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Deterministic preflight planning for the local video analyzer.
 
 The planner deliberately knows nothing about backend implementations.  It turns a
@@ -7,11 +5,13 @@ validated request and source inspection into a bounded, ordered DAG, and rejects
 missing local capabilities before any media stage can run.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from inspect import signature
 from math import isfinite
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from .contracts import AnalysisError, AnalysisPlan, AnalyzeVideoRequest, StageRecord
 
@@ -111,7 +111,11 @@ def _construct_model(model_type: type[Any], values: Mapping[str, Any]) -> Any:
     """
 
     names = _model_field_names(model_type)
-    filtered = dict(values) if names is None else {k: v for k, v in values.items() if k in names}
+    filtered = (
+        dict(values)
+        if names is None
+        else {k: v for k, v in values.items() if k in names}
+    )
     try:
         return model_type(**filtered)
     except Exception:
@@ -141,7 +145,11 @@ def _task_names(request: AnalyzeVideoRequest) -> tuple[str, ...]:
         joined = ", ".join(sorted(unknown))
         _raise_failure("INVALID_REQUEST", f"unsupported analysis task(s): {joined}")
     # A fixed order avoids set iteration affecting either stages or plan JSON.
-    return tuple(name for name in ("metadata", "transcript", "vad", "frames", "ocr") if name in values)
+    return tuple(
+        name
+        for name in ("metadata", "transcript", "vad", "frames", "ocr")
+        if name in values
+    )
 
 
 def _time_bounds(request: AnalyzeVideoRequest) -> tuple[float, float]:
@@ -265,23 +273,24 @@ def _track_provenance(track: object) -> dict[str, Any]:
     }
 
 
-def _uniform_timestamps(request: AnalyzeVideoRequest, start: float, end: float) -> tuple[float, ...]:
+def _uniform_timestamps(
+    request: AnalyzeVideoRequest, start: float, end: float
+) -> tuple[float, ...]:
     provided = _field(request, "frame_timestamps_seconds", None)
     max_frames = int(_field(request, "max_frames", 1))
     if provided is not None:
         try:
             values = tuple(float(value) for value in provided)
         except (TypeError, ValueError):
-            _raise_failure("INVALID_REQUEST", "frame_timestamps_seconds must be numeric")
+            _raise_failure(
+                "INVALID_REQUEST", "frame_timestamps_seconds must be numeric"
+            )
         if len(values) > max_frames:
             _raise_failure(
                 "INVALID_REQUEST",
                 "frame timestamp count cannot exceed max_frames",
             )
-        if any(
-            not isfinite(value) or value < start or value > end
-            for value in values
-        ):
+        if any(not isfinite(value) or value < start or value > end for value in values):
             _raise_failure(
                 "INVALID_REQUEST",
                 "frame timestamps must be finite and inside time_range",
@@ -289,7 +298,9 @@ def _uniform_timestamps(request: AnalyzeVideoRequest, start: float, end: float) 
         return values
     count = min(max_frames, 12)
     duration = end - start
-    return tuple(start + duration * index / (count + 1) for index in range(1, count + 1))
+    return tuple(
+        start + duration * index / (count + 1) for index in range(1, count + 1)
+    )
 
 
 def _sanitize(value: object, *, depth: int = 0) -> Any:
@@ -329,10 +340,12 @@ def _stage(
         "warnings": [],
         "error": None,
     }
-    return _construct_model(StageRecord, payload)
+    return cast(StageRecord, _construct_model(StageRecord, payload))
 
 
-def _source_identity(request: AnalyzeVideoRequest, inspection: object) -> dict[str, Any]:
+def _source_identity(
+    request: AnalyzeVideoRequest, inspection: object
+) -> dict[str, Any]:
     duration = _field(inspection, "duration_seconds", None)
     try:
         duration_value = float(duration) if duration is not None else None
@@ -390,7 +403,7 @@ def _make_error(code: str, message: str, *, stage: str = "planning") -> Analysis
         "message": message[:512],
         "retryable": False,
     }
-    return _construct_model(AnalysisError, payload)
+    return cast(AnalysisError, _construct_model(AnalysisError, payload))
 
 
 def _raise_failure(code: str, message: str, *, stage: str = "planning") -> None:
@@ -428,7 +441,6 @@ def build_execution_plan(
     wants_visual = wants_frames or wants_ocr
     timestamps = _uniform_timestamps(request, start, end) if wants_visual else ()
 
-
     caption_track = _select_caption(inspection, request) if wants_transcript else None
     has_captions = caption_track is not None and bool(capabilities.captions)
     asr_fallback = wants_transcript and not has_captions
@@ -438,7 +450,10 @@ def build_execution_plan(
     # Check the most specific user-visible capability first when several are
     # unavailable (e.g. OCR and FFmpeg both missing).
     if wants_ocr and not bool(capabilities.tesseract):
-        _raise_failure("OCR_UNAVAILABLE", "local Tesseract capability is unavailable")
+        _raise_failure(
+            "OCR_UNAVAILABLE",
+            "local Tesseract capability is unavailable (ensure tesseract is installed in PATH)",
+        )
     if asr_fallback:
         if not asr_enabled:
             _raise_failure(
@@ -448,15 +463,18 @@ def build_execution_plan(
         if not bool(capabilities.asr):
             _raise_failure(
                 "ASR_MODEL_UNAVAILABLE",
-                "local ASR capability is unavailable for transcript fallback",
+                "local ASR capability is unavailable for transcript fallback (install with: pip install 'video-analyzer[asr]')",
             )
         if not bool(capabilities.vad):
             _raise_failure(
                 "TOOL_UNAVAILABLE",
-                "local VAD capability is unavailable for transcript fallback",
+                "local VAD capability is unavailable for transcript fallback (install with: pip install 'video-analyzer[asr]')",
             )
     if wants_vad and not bool(capabilities.vad):
-        _raise_failure("TOOL_UNAVAILABLE", "local VAD capability is unavailable")
+        _raise_failure(
+            "TOOL_UNAVAILABLE",
+            "local VAD capability is unavailable (install with: pip install 'video-analyzer[vad]')",
+        )
     if wants_visual or wants_vad or asr_fallback:
         _require_media_capabilities(capabilities)
 
@@ -480,11 +498,15 @@ def build_execution_plan(
         "inspect_source",
         ("validate_source",),
         {
-            "source_type": "url" if bool(_field(inspection, "is_url", False)) else "local",
+            "source_type": "url"
+            if bool(_field(inspection, "is_url", False))
+            else "local",
             "caption_track_count": len(_source_tracks(inspection)),
         },
     )
-    add_stage("persist_plan", ("inspect_source",), {"format": "json", "cloud_policy": "deny"})
+    add_stage(
+        "persist_plan", ("inspect_source",), {"format": "json", "cloud_policy": "deny"}
+    )
 
     if wants_metadata:
         add_stage("metadata", ("persist_plan",), {"route": "source_inspection"})
@@ -492,7 +514,7 @@ def build_execution_plan(
         add_stage(
             "captions",
             ("persist_plan",),
-            _track_provenance(caption_track),  # type: ignore[arg-type]
+            _track_provenance(caption_track),
         )
 
     needs_audio = wants_vad or asr_fallback
@@ -570,7 +592,7 @@ def build_execution_plan(
         routes["metadata"] = {"route": "source_inspection"}
     if wants_transcript:
         if has_captions:
-            routes["transcript"] = _track_provenance(caption_track)  # type: ignore[arg-type]
+            routes["transcript"] = _track_provenance(caption_track)
         else:
             routes["transcript"] = {
                 "route": "asr",
@@ -590,7 +612,10 @@ def build_execution_plan(
     if wants_visual:
         routes["frames"] = {"route": "ffmpeg", "max_frames": limits["max_frames"]}
     if wants_ocr:
-        routes["ocr"] = {"route": "tesseract", "language": _text(_field(request, "language", "en"))[:32]}
+        routes["ocr"] = {
+            "route": "tesseract",
+            "language": _text(_field(request, "language", "en"))[:32],
+        }
 
     normalized_request = _normalized_request(
         request,
@@ -620,7 +645,7 @@ def build_execution_plan(
         "diagnostics": _sanitize(diagnostics),
         "warnings": [],
     }
-    return _construct_model(AnalysisPlan, plan_payload)
+    return cast(AnalysisPlan, _construct_model(AnalysisPlan, plan_payload))
 
 
 __all__ = ["Capabilities", "PlanningFailure", "build_execution_plan"]

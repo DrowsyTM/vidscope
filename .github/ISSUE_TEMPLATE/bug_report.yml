@@ -1,0 +1,41 @@
+name: Bug Report
+description: Create a report that helps maintainers reproduce and fix a problem.
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Thank you for reporting a problem. Check existing reports first and
+        remove sensitive information from all public fields.
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem Description
+      description: Describe what happened and what you expected instead.
+      placeholder: A clear and concise description of the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Include exact steps, input, and a minimal example where possible.
+      placeholder: |
+        1. Run ...
+        2. Configure ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Provide relevant runtime, dependency, platform, or deployment details.
+      placeholder: Runtime and environment details.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs or Trace
+      description: Paste relevant output and remove credentials, tokens, and private data.
+      render: text

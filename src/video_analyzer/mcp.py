@@ -8,8 +8,9 @@ from pydantic import ValidationError
 
 from .artifacts import ArtifactStoreFailure, read_artifact_resource
 from .contracts import AnalysisError, AnalysisResult, AnalyzeVideoRequest, ErrorCode
-from .core import VideoAnalyzerFailure
+from .core import AnalysisContext, VideoAnalyzerFailure
 from .core import analyze_video as core_analyze_video
+from .logging import configure_logging
 
 mcp = FastMCP("video-analyzer")
 
@@ -22,11 +23,26 @@ def _error_payload(error: AnalysisError) -> dict[str, Any]:
     name="analyze_video",
     annotations={"readOnlyHint": False, "idempotentHint": False},
 )
-def analyze_video(request: AnalyzeVideoRequest) -> AnalysisResult | ToolResult:
+def analyze_video(
+    request: AnalyzeVideoRequest,
+    ctx: Any = None,
+) -> AnalysisResult | ToolResult:
     """Analyze one bounded local or HTTPS video through the shared core API."""
 
+    context: AnalysisContext | None = None
+    if ctx is not None:
+
+        def progress(stage: str, progress: float, total: float, message: str) -> None:
+            try:
+                if hasattr(ctx, "info"):
+                    ctx.info(f"[{stage}] {message}")
+            except Exception:
+                pass
+
+        context = AnalysisContext(progress_callback=progress)
+
     try:
-        return core_analyze_video(request)
+        return core_analyze_video(request, context=context)
     except VideoAnalyzerFailure as exc:
         payload = _error_payload(exc.error)
         return ToolResult(content=payload, structured_content=payload, is_error=True)
@@ -67,6 +83,7 @@ def _read_artifact_resource(
 
 
 def main() -> None:
+    configure_logging()
     mcp.run()
 
 

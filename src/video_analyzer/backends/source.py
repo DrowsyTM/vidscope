@@ -1,7 +1,3 @@
-from __future__ import annotations
-
-# Provider boundaries intentionally normalize arbitrary third-party failures.
-# ruff: noqa: BLE001, S110, S112
 """Source inspection, caption resolution, and bounded media acquisition.
 
 This module deliberately keeps third-party imports inside the operations that use
@@ -9,12 +5,18 @@ those providers.  Importing :mod:`video_analyzer.backends.source` therefore does
 not load yt-dlp, the YouTube transcript client, or any media/model runtime.
 """
 
+from __future__ import annotations
+
+# Provider boundaries intentionally normalize arbitrary third-party failures.
+# ruff: noqa: BLE001, S110, S112
 import contextlib
 import html
+import ipaddress
 import json
 import math
 import os
 import re
+import socket
 import subprocess
 import tempfile
 import time
@@ -26,6 +28,21 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ..contracts import AnalysisError, ErrorCode
+
+
+class _MuffledLogger:
+    def debug(self, msg: str) -> None:
+        pass
+
+    def warning(self, msg: str) -> None:
+        pass
+
+    def error(self, msg: str) -> None:
+        pass
+
+    def info(self, msg: str) -> None:
+        pass
+
 
 MAX_DIAGNOSTIC_CHARS = 4_000
 MAX_CAPTION_SEGMENTS = 10_000
@@ -79,12 +96,19 @@ def _bounded(value: Any, *, depth: int = 0) -> Any:
             if index >= MAX_METADATA_ITEMS:
                 break
             key_text = _text(key, limit=128)
-            if key_text.lower() in {"comments", "comment", "entries", "playlist_entries"}:
+            if key_text.lower() in {
+                "comments",
+                "comment",
+                "entries",
+                "playlist_entries",
+            }:
                 continue
             result[key_text] = _bounded(item, depth=depth + 1)
         return result
     if isinstance(value, (list, tuple, set, frozenset)):
-        return [_bounded(item, depth=depth + 1) for item in list(value)[:MAX_METADATA_ITEMS]]
+        return [
+            _bounded(item, depth=depth + 1) for item in list(value)[:MAX_METADATA_ITEMS]
+        ]
     return _text(value)
 
 
@@ -103,16 +127,28 @@ def _normalize_segment(segment: Any) -> dict[str, Any] | None:
             for key in ("start", "duration", "end", "text", "words")
             if hasattr(segment, key)
         }
-    start = _finite_float(_segment_value(segment, "start_seconds", "start", "offset", "begin", "tStartMs"))
+    start = _finite_float(
+        _segment_value(segment, "start_seconds", "start", "offset", "begin", "tStartMs")
+    )
     if start is None:
         return None
-    if "tStartMs" in segment and "start_seconds" not in segment and "start" not in segment:
+    if (
+        "tStartMs" in segment
+        and "start_seconds" not in segment
+        and "start" not in segment
+    ):
         start /= 1000.0
     end = _finite_float(_segment_value(segment, "end_seconds", "end", "to"))
     if end is None:
-        duration = _finite_float(_segment_value(segment, "duration", "duration_seconds", "dDurationMs"))
+        duration = _finite_float(
+            _segment_value(segment, "duration", "duration_seconds", "dDurationMs")
+        )
         if duration is not None:
-            if "dDurationMs" in segment and "duration" not in segment and "duration_seconds" not in segment:
+            if (
+                "dDurationMs" in segment
+                and "duration" not in segment
+                and "duration_seconds" not in segment
+            ):
                 duration /= 1000.0
             end = start + max(0.0, duration)
     if end is None:
@@ -121,7 +157,11 @@ def _normalize_segment(segment: Any) -> dict[str, Any] | None:
         start, end = end, start
     text = _segment_value(segment, "text", "caption", "value")
     if text is None and isinstance(segment.get("segs"), Sequence):
-        text = "".join(_text(item.get("utf8", "")) for item in segment["segs"] if isinstance(item, Mapping))
+        text = "".join(
+            _text(item.get("utf8", ""))
+            for item in segment["segs"]
+            if isinstance(item, Mapping)
+        )
     normalized: dict[str, Any] = {
         "start_seconds": max(0.0, start),
         "end_seconds": max(max(0.0, start), end),
@@ -165,7 +205,9 @@ class CaptionTrack:
         self.kind = _text(self.kind, limit=32).lower() or "manual"
         self.language = _text(self.language, limit=64)
         self.provider = _text(self.provider, limit=128)
-        self.source_url = None if self.source_url is None else _text(self.source_url, limit=2_048)
+        self.source_url = (
+            None if self.source_url is None else _text(self.source_url, limit=2_048)
+        )
         self.segments = _normalize_segments(self.segments)
         self.metadata = _bounded(self.metadata)
         if not isinstance(self.metadata, dict):
@@ -209,12 +251,16 @@ class SourceInspection:
                 except (TypeError, ValueError):
                     continue
         self.caption_tracks = tracks[:MAX_METADATA_ITEMS]
-        self.formats = [dict(_bounded(item)) for item in (self.formats or []) if isinstance(item, Mapping)][:
-            MAX_METADATA_ITEMS
-        ]
-        self.streams = [dict(_bounded(item)) for item in (self.streams or []) if isinstance(item, Mapping)][:
-            MAX_METADATA_ITEMS
-        ]
+        self.formats = [
+            dict(_bounded(item))
+            for item in (self.formats or [])
+            if isinstance(item, Mapping)
+        ][:MAX_METADATA_ITEMS]
+        self.streams = [
+            dict(_bounded(item))
+            for item in (self.streams or [])
+            if isinstance(item, Mapping)
+        ][:MAX_METADATA_ITEMS]
         self.metadata = _bounded(self.metadata)
         if not isinstance(self.metadata, dict):
             self.metadata = {}
@@ -226,7 +272,9 @@ class SourceInspection:
             "source": self.source,
             "is_url": self.is_url,
             "duration_seconds": self.duration_seconds,
-            "caption_tracks": [track.model_dump(mode=mode) for track in self.caption_tracks],
+            "caption_tracks": [
+                track.model_dump(mode=mode) for track in self.caption_tracks
+            ],
             "formats": _bounded(self.formats),
             "metadata": _bounded(self.metadata),
             "streams": _bounded(self.streams),
@@ -298,7 +346,9 @@ def _failure(
     diagnostics: Sequence[str] = (),
     cause: BaseException | None = None,
 ) -> SourceBackendFailure:
-    return SourceBackendFailure(code, message, stage=stage, diagnostics=diagnostics, cause=cause)
+    return SourceBackendFailure(
+        code, message, stage=stage, diagnostics=diagnostics, cause=cause
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +380,7 @@ def _settings_value(settings: Any, name: str, default: Any = None) -> Any:
     if env_name and os.environ.get(env_name):
         return os.environ[env_name]
     try:
-        from ..settings import get_settings  # type: ignore
+        from ..settings import get_settings
 
         loaded = get_settings()
         value = getattr(loaded, name, default)
@@ -385,7 +435,13 @@ def _run_command(
     # callables to a simple ``runner(command)`` function.  Prefer the richer
     # call, then progressively remove optional kwargs.
     attempts: tuple[dict[str, Any], ...] = (
-        {"capture_output": True, "check": False, "env": env, "cwd": str(cwd) if cwd else None, "timeout": timeout},
+        {
+            "capture_output": True,
+            "check": False,
+            "env": env,
+            "cwd": str(cwd) if cwd else None,
+            "timeout": timeout,
+        },
         {"env": env, "cwd": str(cwd) if cwd else None, "timeout": timeout},
         {},
     )
@@ -396,6 +452,7 @@ def _run_command(
             continue
     return runner(list(command))
 
+
 def _provider_call(provider: Any, method: str, *args: Any, **kwargs: Any) -> Any:
     target = getattr(provider, method, None)
     if target is None and callable(provider):
@@ -404,7 +461,14 @@ def _provider_call(provider: Any, method: str, *args: Any, **kwargs: Any) -> Any
         raise AttributeError(f"provider has no {method}")
     attempts: list[tuple[tuple[Any, ...], dict[str, Any]]] = [
         (args, kwargs),
-        (args, {key: value for key, value in kwargs.items() if key not in {"options", "download", "progress_hooks"}}),
+        (
+            args,
+            {
+                key: value
+                for key, value in kwargs.items()
+                if key not in {"options", "download", "progress_hooks"}
+            },
+        ),
         (args, {}),
     ]
     for call_args, call_kwargs in attempts:
@@ -427,6 +491,7 @@ def _yt_env() -> Iterator[None]:
         else:
             os.environ["YTDLP_IGNORE_CONFIG"] = previous
 
+
 def _source_path(source: str) -> Path | None:
     parsed = urllib.parse.urlparse(source)
     if parsed.scheme.lower() == "file":
@@ -437,7 +502,11 @@ def _source_path(source: str) -> Path | None:
                 stage="validate_source",
             )
         if parsed.netloc not in ("", "localhost"):
-            raise _failure("SOURCE_NOT_ALLOWED", "file URI host is not allowed", stage="validate_source")
+            raise _failure(
+                "SOURCE_NOT_ALLOWED",
+                "file URI host is not allowed",
+                stage="validate_source",
+            )
         return Path(urllib.parse.unquote(parsed.path))
     if parsed.scheme:
         return None
@@ -446,36 +515,126 @@ def _source_path(source: str) -> Path | None:
 
 def _source_is_url(source: str) -> bool:
     parsed = urllib.parse.urlparse(source)
-    return parsed.scheme.lower() == "https"
+    return parsed.scheme.lower() in ("https", "http")
+
+
+def _is_prohibited_ip(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        return (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
+    except ValueError:
+        return False
+
+
+def _validate_network_url(source: str, *, resolve_dns: bool = False) -> None:
+    parsed = urllib.parse.urlparse(source)
+    if parsed.scheme.lower() != "https":
+        raise _failure(
+            "URL_SCHEME_NOT_ALLOWED",
+            "source URL scheme is not allowed; only https is supported",
+            stage="validate_source",
+        )
+    if parsed.username or parsed.password or parsed.fragment:
+        raise _failure(
+            "SOURCE_NOT_ALLOWED",
+            "URL credentials and fragments are not allowed",
+            stage="validate_source",
+        )
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise _failure(
+            "SOURCE_NOT_ALLOWED", "invalid URL hostname", stage="validate_source"
+        )
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
+        ".localhost"
+    ):
+        raise _failure(
+            "SOURCE_NOT_ALLOWED",
+            "access to localhost is not allowed",
+            stage="validate_source",
+        )
+    if _is_prohibited_ip(hostname):
+        raise _failure(
+            "SOURCE_NOT_ALLOWED",
+            f"access to private/reserved IP ({hostname}) is not allowed",
+            stage="validate_source",
+        )
+    if resolve_dns:
+        try:
+            addr_info = socket.getaddrinfo(hostname, None)
+            for item in addr_info:
+                sockaddr = item[4]
+                ip_addr = str(sockaddr[0])
+                if _is_prohibited_ip(ip_addr):
+                    raise _failure(
+                        "SOURCE_NOT_ALLOWED",
+                        f"access to private/reserved IP ({ip_addr}) is not allowed",
+                        stage="validate_source",
+                    )
+        except socket.gaierror:
+            pass
 
 
 def _validate_local_path(path: Path, settings: Any = None) -> Path:
     if not path.is_absolute():
-        raise _failure("SOURCE_NOT_ALLOWED", "local source must be an absolute path", stage="validate_source")
+        raise _failure(
+            "SOURCE_NOT_ALLOWED",
+            "local source must be an absolute path",
+            stage="validate_source",
+        )
     try:
         resolved = path.resolve(strict=True)
     except FileNotFoundError as exc:
-        raise _failure("SOURCE_NOT_FOUND", "local source does not exist", stage="validate_source", cause=exc) from exc
+        raise _failure(
+            "SOURCE_NOT_FOUND",
+            "local source does not exist",
+            stage="validate_source",
+            cause=exc,
+        ) from exc
     except OSError as exc:
-        raise _failure("SOURCE_NOT_FOUND", "local source cannot be resolved", stage="validate_source", cause=exc) from exc
+        raise _failure(
+            "SOURCE_NOT_FOUND",
+            "local source cannot be resolved",
+            stage="validate_source",
+            cause=exc,
+        ) from exc
     if not resolved.is_file() or not os.access(resolved, os.R_OK):
-        raise _failure("SOURCE_NOT_FOUND", "local source is not a readable file", stage="validate_source")
+        raise _failure(
+            "SOURCE_NOT_FOUND",
+            "local source is not a readable file",
+            stage="validate_source",
+        )
     allowed = _settings_value(settings, "allowed_input_root")
     if allowed:
         try:
             root = Path(allowed).expanduser().resolve(strict=True)
             resolved.relative_to(root)
-        except (OSError, ValueError):
-            raise _failure("SOURCE_NOT_ALLOWED", "local source is outside the allowed input root", stage="validate_source")
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                "SOURCE_NOT_ALLOWED",
+                "local source is outside the allowed input root",
+                stage="validate_source",
+            ) from exc
     return resolved
 
 
 def _duration_from_probe(data: Mapping[str, Any]) -> float | None:
     format_data = data.get("format")
-    duration = _finite_float(_mapping_value(format_data, "duration")) if format_data else None
+    duration = (
+        _finite_float(_mapping_value(format_data, "duration")) if format_data else None
+    )
     if duration is not None:
         return max(0.0, duration)
-    for stream in data.get("streams", []) if isinstance(data.get("streams"), Sequence) else []:
+    for stream in (
+        data.get("streams", []) if isinstance(data.get("streams"), Sequence) else []
+    ):
         duration = _finite_float(_mapping_value(stream, "duration"))
         if duration is not None:
             return max(0.0, duration)
@@ -508,24 +667,38 @@ class SourceInspector:
         provider: Any = None,
     ) -> None:
         self.runner = runner
-        self.yt_dlp_provider = yt_dlp_provider if yt_dlp_provider is not None else provider
+        self.yt_dlp_provider = (
+            yt_dlp_provider if yt_dlp_provider is not None else provider
+        )
         self.settings = settings
         self.ffprobe_bin = ffprobe_bin
 
     def inspect(self, request: Any) -> SourceInspection:
         source = _text(_mapping_value(request, "source", ""), limit=4_096)
         if _source_is_url(source):
+            _validate_network_url(source, resolve_dns=(self.yt_dlp_provider is None))
             return self._inspect_url(source)
         parsed = urllib.parse.urlparse(source)
         if parsed.scheme and parsed.scheme.lower() != "file":
-            raise _failure("URL_SCHEME_NOT_ALLOWED", "source URL scheme is not allowed", stage="validate_source")
+            raise _failure(
+                "URL_SCHEME_NOT_ALLOWED",
+                "source URL scheme is not allowed",
+                stage="validate_source",
+            )
         path = _validate_local_path(_source_path(source) or Path(source), self.settings)
         return self._inspect_local(source, path)
 
     def _inspect_local(self, source: str, path: Path) -> SourceInspection:
-        ffprobe = self.ffprobe_bin or _settings_value(self.settings, "ffprobe_bin", "ffprobe") or "ffprobe"
+        ffprobe = (
+            self.ffprobe_bin
+            or _settings_value(self.settings, "ffprobe_bin", "ffprobe")
+            or "ffprobe"
+        )
         command = [
             str(ffprobe),
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,pipe,crypto,data",
             "-v",
             "error",
             "-show_streams",
@@ -537,16 +710,39 @@ class SourceInspector:
         try:
             result = _run_command(self.runner, command)
         except FileNotFoundError as exc:
-            raise _failure("TOOL_UNAVAILABLE", "ffprobe is not available", stage="inspect_source", cause=exc) from exc
+            raise _failure(
+                "TOOL_UNAVAILABLE",
+                "ffprobe is not available",
+                stage="inspect_source",
+                cause=exc,
+            ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise _failure("TIMEOUT", "ffprobe inspection timed out", stage="inspect_source", cause=exc) from exc
+            raise _failure(
+                "TIMEOUT",
+                "ffprobe inspection timed out",
+                stage="inspect_source",
+                cause=exc,
+            ) from exc
         except OSError as exc:
-            raise _failure("TOOL_UNAVAILABLE", "ffprobe could not be started", stage="inspect_source", cause=exc) from exc
-        if isinstance(result, Mapping) and ("streams" in result or "format" in result) and "stdout" not in result:
+            raise _failure(
+                "TOOL_UNAVAILABLE",
+                "ffprobe could not be started",
+                stage="inspect_source",
+                cause=exc,
+            ) from exc
+        if (
+            isinstance(result, Mapping)
+            and ("streams" in result or "format" in result)
+            and "stdout" not in result
+        ):
             returncode, stdout, stderr = 0, b"", b""
             probe: Any = result
         elif isinstance(result, (str, bytes)):
-            returncode, stdout, stderr = 0, (result.encode("utf-8") if isinstance(result, str) else result), b""
+            returncode, stdout, stderr = (
+                0,
+                (result.encode("utf-8") if isinstance(result, str) else result),
+                b"",
+            )
             probe = None
         else:
             returncode, stdout, stderr = _command_output(result)
@@ -562,10 +758,23 @@ class SourceInspector:
             try:
                 probe = json.loads(stdout.decode("utf-8", errors="replace"))
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise _failure("MEDIA_DECODE_FAILED", "ffprobe returned malformed JSON", stage="inspect_source", cause=exc) from exc
+                raise _failure(
+                    "MEDIA_DECODE_FAILED",
+                    "ffprobe returned malformed JSON",
+                    stage="inspect_source",
+                    cause=exc,
+                ) from exc
         if not isinstance(probe, Mapping):
-            raise _failure("MEDIA_DECODE_FAILED", "ffprobe returned an invalid document", stage="inspect_source")
-        streams = [dict(_bounded(item)) for item in probe.get("streams", []) if isinstance(item, Mapping)]
+            raise _failure(
+                "MEDIA_DECODE_FAILED",
+                "ffprobe returned an invalid document",
+                stage="inspect_source",
+            )
+        streams = [
+            dict(_bounded(item))
+            for item in probe.get("streams", [])
+            if isinstance(item, Mapping)
+        ]
         tracks: list[CaptionTrack] = []
         for index, stream in enumerate(streams):
             if str(stream.get("codec_type", "")).lower() != "subtitle":
@@ -578,12 +787,17 @@ class SourceInspector:
                     provider="ffprobe",
                     source_url=source,
                     segments=[],
-                    metadata={"stream_index": index, "codec_name": stream.get("codec_name")},
+                    metadata={
+                        "stream_index": index,
+                        "codec_name": stream.get("codec_name"),
+                    },
                 )
             )
         suffix = path.suffix.lower().lstrip(".") or "bin"
         size = path.stat().st_size
-        formats = [{"format_id": "local", "ext": suffix, "protocol": "file", "filesize": size}]
+        formats = [
+            {"format_id": "local", "ext": suffix, "protocol": "file", "filesize": size}
+        ]
         format_data = probe.get("format")
         metadata = {
             "source_kind": "local",
@@ -605,7 +819,11 @@ class SourceInspector:
     def _inspect_url(self, source: str) -> SourceInspection:
         parsed = urllib.parse.urlparse(source)
         if parsed.username or parsed.password or parsed.fragment:
-            raise _failure("SOURCE_NOT_ALLOWED", "URL credentials and fragments are not allowed", stage="validate_source")
+            raise _failure(
+                "SOURCE_NOT_ALLOWED",
+                "URL credentials and fragments are not allowed",
+                stage="validate_source",
+            )
         options: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
@@ -618,6 +836,7 @@ class SourceInspector:
             "writesubtitles": False,
             "writeautomaticsub": False,
             "getcomments": False,
+            "logger": _MuffledLogger(),
         }
         try:
             with _yt_env():
@@ -625,7 +844,12 @@ class SourceInspector:
         except SourceBackendFailure:
             raise
         except (ImportError, ModuleNotFoundError) as exc:
-            raise _failure("TOOL_UNAVAILABLE", "yt-dlp is not available", stage="inspect_source", cause=exc) from exc
+            raise _failure(
+                "TOOL_UNAVAILABLE",
+                "yt-dlp is not available",
+                stage="inspect_source",
+                cause=exc,
+            ) from exc
         except Exception as exc:
             raise _failure(
                 "INTERNAL_STAGE_FAILED",
@@ -635,20 +859,44 @@ class SourceInspector:
                 cause=exc,
             ) from exc
         if not isinstance(info, Mapping):
-            raise _failure("INTERNAL_STAGE_FAILED", "yt-dlp returned invalid metadata", stage="inspect_source")
+            raise _failure(
+                "INTERNAL_STAGE_FAILED",
+                "yt-dlp returned invalid metadata",
+                stage="inspect_source",
+            )
         if info.get("_type") == "playlist" or info.get("entries"):
-            raise _failure("SOURCE_NOT_ALLOWED", "playlist extraction is disabled", stage="inspect_source")
-        streams = [dict(_bounded(item)) for item in info.get("formats", []) if isinstance(item, Mapping)]
+            raise _failure(
+                "SOURCE_NOT_ALLOWED",
+                "playlist extraction is disabled",
+                stage="inspect_source",
+            )
+        streams = [
+            dict(_bounded(item))
+            for item in info.get("formats", [])
+            if isinstance(item, Mapping)
+        ]
         tracks = self._caption_tracks_from_info(source, info)
         metadata = {
             key: _bounded(value)
             for key, value in info.items()
-            if key not in {"formats", "subtitles", "automatic_captions", "requested_subtitles", "entries", "comments"}
+            if key
+            not in {
+                "formats",
+                "subtitles",
+                "automatic_captions",
+                "requested_subtitles",
+                "entries",
+                "comments",
+            }
         }
         metadata["source_kind"] = "url"
         metadata["webpage_url"] = _text(info.get("webpage_url") or source, limit=4_096)
         duration = _finite_float(info.get("duration"))
-        formats = [dict(_bounded(item)) for item in info.get("formats", []) if isinstance(item, Mapping)]
+        formats = [
+            dict(_bounded(item))
+            for item in info.get("formats", [])
+            if isinstance(item, Mapping)
+        ]
         return SourceInspection(
             source=source,
             is_url=True,
@@ -662,22 +910,33 @@ class SourceInspector:
     def _extract_info(self, source: str, options: Mapping[str, Any]) -> Any:
         provider = self.yt_dlp_provider
         if provider is not None:
-            return _provider_call(provider, "extract_info", source, download=False, options=dict(options))
-        import yt_dlp  # type: ignore  # lazy optional provider import
+            return _provider_call(
+                provider, "extract_info", source, download=False, options=dict(options)
+            )
+        import yt_dlp  # lazy optional provider import
 
         with yt_dlp.YoutubeDL(dict(options)) as ydl:
             return ydl.extract_info(source, download=False)
 
     @staticmethod
-    def _caption_tracks_from_info(source: str, info: Mapping[str, Any]) -> list[CaptionTrack]:
+    def _caption_tracks_from_info(
+        source: str, info: Mapping[str, Any]
+    ) -> list[CaptionTrack]:
         tracks: list[CaptionTrack] = []
         for kind, key in (("manual", "subtitles"), ("automatic", "automatic_captions")):
             captions = info.get(key)
             if not isinstance(captions, Mapping):
                 continue
             for language, entries in list(captions.items())[:MAX_METADATA_ITEMS]:
-                candidates = entries if isinstance(entries, Sequence) and not isinstance(entries, (str, bytes)) else [entries]
-                candidate = next((item for item in candidates if isinstance(item, Mapping)), {})
+                candidates = (
+                    entries
+                    if isinstance(entries, Sequence)
+                    and not isinstance(entries, (str, bytes))
+                    else [entries]
+                )
+                candidate = next(
+                    (item for item in candidates if isinstance(item, Mapping)), {}
+                )
                 url = candidate.get("url") if isinstance(candidate, Mapping) else None
                 tracks.append(
                     CaptionTrack(
@@ -687,8 +946,12 @@ class SourceInspector:
                         source_url=_text(url, limit=4_096) if url else source,
                         segments=[],
                         metadata={
-                            "ext": candidate.get("ext") if isinstance(candidate, Mapping) else None,
-                            "name": candidate.get("name") if isinstance(candidate, Mapping) else None,
+                            "ext": candidate.get("ext")
+                            if isinstance(candidate, Mapping)
+                            else None,
+                            "name": candidate.get("name")
+                            if isinstance(candidate, Mapping)
+                            else None,
                             "formats": _bounded(candidates),
                         },
                     )
@@ -703,7 +966,9 @@ class SourceInspector:
 def _language_matches(language: str, requested: str) -> tuple[bool, bool]:
     language = language.lower().replace("_", "-")
     requested = requested.lower().replace("_", "-")
-    return language == requested, language.split("-", 1)[0] == requested.split("-", 1)[0]
+    return language == requested, language.split("-", 1)[0] == requested.split("-", 1)[
+        0
+    ]
 
 
 def _choose_track(tracks: Sequence[CaptionTrack], language: str) -> CaptionTrack | None:
@@ -743,7 +1008,10 @@ def _strip_caption_markup(value: str) -> str:
     value = re.sub(r"<[^>]+>", "", value)
     return html.unescape(value).strip()
 
-def _parse_caption_payload(payload: Any, *, extension: str = "") -> list[dict[str, Any]]:
+
+def _parse_caption_payload(
+    payload: Any, *, extension: str = ""
+) -> list[dict[str, Any]]:
     if isinstance(payload, (Mapping, list)):
         if isinstance(payload, Mapping) and isinstance(payload.get("events"), Sequence):
             return _normalize_segments(payload)
@@ -760,21 +1028,39 @@ def _parse_caption_payload(payload: Any, *, extension: str = "") -> list[dict[st
             return _parse_caption_payload(json.loads(stripped), extension=extension)
         except (ValueError, TypeError):
             pass
-    if extension.lower().lstrip(".") in {"ttml", "xml", "dfxp"} or "<tt" in text[:512].lower():
+    if (
+        extension.lower().lstrip(".") in {"ttml", "xml", "dfxp"}
+        or "<tt" in text[:512].lower()
+    ):
         xml_rows: list[dict[str, Any]] = []
-        for xml_match in re.finditer(r"<p\b([^>]*)>(.*?)</p>", text, flags=re.IGNORECASE | re.DOTALL):
+        for xml_match in re.finditer(
+            r"<p\b([^>]*)>(.*?)</p>", text, flags=re.IGNORECASE | re.DOTALL
+        ):
             attrs, xml_body = xml_match.groups()
-            begin_match = re.search(r"(?:begin|start)=['\"]([^'\"]+)", attrs, flags=re.IGNORECASE)
+            begin_match = re.search(
+                r"(?:begin|start)=['\"]([^'\"]+)", attrs, flags=re.IGNORECASE
+            )
             end_match = re.search(r"(?:end)=['\"]([^'\"]+)", attrs, flags=re.IGNORECASE)
             start = _parse_timestamp(begin_match.group(1)) if begin_match else None
             end = _parse_timestamp(end_match.group(1)) if end_match else None
             if start is not None:
-                xml_rows.append(_normalize_segment({"start": start, "end": end, "text": _strip_caption_markup(xml_body)}) or {})
+                xml_rows.append(
+                    _normalize_segment(
+                        {
+                            "start": start,
+                            "end": end,
+                            "text": _strip_caption_markup(xml_body),
+                        }
+                    )
+                    or {}
+                )
         return [item for item in xml_rows if item]
     lines = text.splitlines()
     result: list[dict[str, Any]] = []
     index = 0
-    timestamp_re = re.compile(r"(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})")
+    timestamp_re = re.compile(
+        r"(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})"
+    )
     while index < len(lines):
         timestamp_match = timestamp_re.search(lines[index])
         if timestamp_match is None:
@@ -789,7 +1075,13 @@ def _parse_caption_payload(payload: Any, *, extension: str = "") -> list[dict[st
                 body.append(lines[index].strip())
             index += 1
         if start is not None and end is not None:
-            item = _normalize_segment({"start": start, "end": end, "text": _strip_caption_markup(" ".join(body))})
+            item = _normalize_segment(
+                {
+                    "start": start,
+                    "end": end,
+                    "text": _strip_caption_markup(" ".join(body)),
+                }
+            )
             if item is not None:
                 result.append(item)
     return result[:MAX_CAPTION_SEGMENTS]
@@ -801,7 +1093,11 @@ def _transcript_video_id(source: str) -> str | None:
     is_youtube_host = host == "youtube.com" or host.endswith(".youtube.com")
     if host in {"youtu.be", "www.youtu.be"}:
         return parsed.path.strip("/").split("/", 1)[0] or None
-    if is_youtube_host or host == "youtube-nocookie.com" or host.endswith(".youtube-nocookie.com"):
+    if (
+        is_youtube_host
+        or host == "youtube-nocookie.com"
+        or host.endswith(".youtube-nocookie.com")
+    ):
         query_id = urllib.parse.parse_qs(parsed.query).get("v")
         if query_id:
             return query_id[0]
@@ -824,6 +1120,7 @@ def _segments_from_transcript(value: Any) -> list[dict[str, Any]]:
 
 class CaptionResolver:
     """Resolve a requested language using native captions before local ASR."""
+
     def __init__(
         self,
         transcript_provider: Any = None,
@@ -836,7 +1133,9 @@ class CaptionResolver:
         downloader: Any = None,
     ) -> None:
         self.transcript_provider = transcript_provider or youtube_provider or provider
-        self.yt_dlp_provider = yt_dlp_provider if yt_dlp_provider is not None else downloader
+        self.yt_dlp_provider = (
+            yt_dlp_provider if yt_dlp_provider is not None else downloader
+        )
         self.runner = runner
         self.settings = settings
         self.max_caption_bytes = max(1, min(int(max_caption_bytes), MAX_CAPTION_BYTES))
@@ -844,11 +1143,19 @@ class CaptionResolver:
             with contextlib.suppress(Exception):
                 self.transcript_provider = self.transcript_provider()
 
-    def resolve(self, inspection: SourceInspection, request: Any) -> CaptionTrack | None:
-        requested_language = _text(_mapping_value(request, "language", "en"), limit=64) or "en"
-        video_id = _transcript_video_id(inspection.source) if inspection.is_url else None
+    def resolve(
+        self, inspection: SourceInspection, request: Any
+    ) -> CaptionTrack | None:
+        requested_language = (
+            _text(_mapping_value(request, "language", "en"), limit=64) or "en"
+        )
+        video_id = (
+            _transcript_video_id(inspection.source) if inspection.is_url else None
+        )
         if video_id:
-            track = self._resolve_youtube(video_id, inspection.source, requested_language)
+            track = self._resolve_youtube(
+                video_id, inspection.source, requested_language
+            )
             if track is not None:
                 return track
         selected = _choose_track(inspection.caption_tracks, requested_language)
@@ -858,7 +1165,9 @@ class CaptionResolver:
             return selected
         payload = self._fetch_caption(selected)
         if payload is not None:
-            segments = _parse_caption_payload(payload, extension=_caption_extension(selected))
+            segments = _parse_caption_payload(
+                payload, extension=_caption_extension(selected)
+            )
             if segments:
                 return CaptionTrack(
                     kind=selected.kind,
@@ -880,11 +1189,13 @@ class CaptionResolver:
             )
         return None
 
-    def _resolve_youtube(self, video_id: str, source: str, language: str) -> CaptionTrack | None:
+    def _resolve_youtube(
+        self, video_id: str, source: str, language: str
+    ) -> CaptionTrack | None:
         provider = self.transcript_provider
         if provider is None:
             try:
-                from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
+                from youtube_transcript_api import YouTubeTranscriptApi
 
                 provider = YouTubeTranscriptApi()
             except (ImportError, ModuleNotFoundError):
@@ -900,7 +1211,13 @@ class CaptionResolver:
         candidates: list[tuple[int, Any, str, str]] = []
         if isinstance(listing, Mapping):
             iterable: Iterable[Any] = [
-                {"language_code": key, "is_generated": bool(value.get("is_generated")) if isinstance(value, Mapping) else False, "data": value}
+                {
+                    "language_code": key,
+                    "is_generated": bool(value.get("is_generated"))
+                    if isinstance(value, Mapping)
+                    else False,
+                    "data": value,
+                }
                 for key, value in listing.items()
             ]
         elif isinstance(listing, Iterable) and not isinstance(listing, (str, bytes)):
@@ -909,7 +1226,9 @@ class CaptionResolver:
             iterable = [listing]
         for index, item in enumerate(iterable):
             item_language = _text(
-                _mapping_value(item, "language_code", _mapping_value(item, "language", language)),
+                _mapping_value(
+                    item, "language_code", _mapping_value(item, "language", language)
+                ),
                 limit=64,
             )
             exact, base = _language_matches(item_language, language)
@@ -952,18 +1271,32 @@ class CaptionResolver:
 
     @staticmethod
     def _transcript_listing(provider: Any, video_id: str, language: str) -> Any:
-        listing_method = getattr(provider, "list", None) or getattr(provider, "list_transcripts", None)
+        listing_method = getattr(provider, "list", None) or getattr(
+            provider, "list_transcripts", None
+        )
         if callable(listing_method):
             return listing_method(video_id)
         get_method = getattr(provider, "get_transcript", None)
         if callable(get_method):
-            return [{"language_code": language, "is_generated": False, "data": get_method(video_id, languages=[language])}]
+            return [
+                {
+                    "language_code": language,
+                    "is_generated": False,
+                    "data": get_method(video_id, languages=[language]),
+                }
+            ]
         if callable(provider):
             return provider(video_id, language=language)
         return []
 
     def _fetch_caption(self, track: CaptionTrack) -> Any:
         if not track.source_url:
+            return None
+        try:
+            _validate_network_url(
+                track.source_url, resolve_dns=(self.yt_dlp_provider is None)
+            )
+        except SourceBackendFailure:
             return None
         provider = self.yt_dlp_provider
         if provider is not None:
@@ -974,7 +1307,9 @@ class CaptionResolver:
                         return target(track.source_url)
                     except Exception:
                         return None
-        request = urllib.request.Request(track.source_url, headers={"User-Agent": "video-analyzer/0.1"})
+        request = urllib.request.Request(
+            track.source_url, headers={"User-Agent": "video-analyzer/0.1"}
+        )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 payload = response.read(self.max_caption_bytes + 1)
@@ -984,7 +1319,9 @@ class CaptionResolver:
             return None
         return payload
 
-    def _extract_embedded_caption(self, track: CaptionTrack, inspection: SourceInspection) -> list[dict[str, Any]]:
+    def _extract_embedded_caption(
+        self, track: CaptionTrack, inspection: SourceInspection
+    ) -> list[dict[str, Any]]:
         stream_index = _mapping_value(track.metadata, "stream_index")
         if stream_index is None or inspection.is_url:
             return []
@@ -992,9 +1329,23 @@ class CaptionResolver:
         if path is None:
             return []
         ffmpeg = _settings_value(self.settings, "ffmpeg_bin", "ffmpeg") or "ffmpeg"
-        command = [str(ffmpeg), "-v", "error", "-i", str(path), "-map", f"0:{stream_index}", "-f", "webvtt", "pipe:1"]
+        command = [
+            str(ffmpeg),
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,pipe,crypto,data",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            f"0:{stream_index}",
+            "-f",
+            "webvtt",
+            "pipe:1",
+        ]
         try:
-            result = _run_command(self.runner, command)
+            result = _run_command(self.runner, command, timeout=60.0)
         except Exception:
             return []
         returncode, stdout, _ = _command_output(result)
@@ -1021,7 +1372,11 @@ def _request_window(request: Any) -> tuple[float, float]:
     start = _finite_float(_mapping_value(value, "start_seconds", 0.0), 0.0) or 0.0
     end = _finite_float(_mapping_value(value, "end_seconds", 180.0), 180.0) or 180.0
     if end <= start:
-        raise _failure("INVALID_REQUEST", "media window must have positive duration", stage="acquire_media")
+        raise _failure(
+            "INVALID_REQUEST",
+            "media window must have positive duration",
+            stage="acquire_media",
+        )
     return max(0.0, start), max(start, end)
 
 
@@ -1034,7 +1389,14 @@ def _request_limit(request: Any, name: str, default: int) -> int:
 
 
 def _store_stage_directory(store: Any, request: Any) -> Path:
-    candidates = ("staging_directory", "staging_dir", "run_directory", "run_dir", "root", "directory")
+    candidates = (
+        "staging_directory",
+        "staging_dir",
+        "run_directory",
+        "run_dir",
+        "root",
+        "directory",
+    )
     for name in candidates:
         value = getattr(store, name, None) if store is not None else None
         if callable(value):
@@ -1050,7 +1412,11 @@ def _store_stage_directory(store: Any, request: Any) -> Path:
             return path
     output = _mapping_value(request, "output_directory")
     request_id = _mapping_value(request, "request_id") or "run"
-    base = Path(output) if output else Path(tempfile.mkdtemp(prefix="video-analyzer-output-"))
+    base = (
+        Path(output)
+        if output
+        else Path(tempfile.mkdtemp(prefix="video-analyzer-output-"))
+    )
     path = base / str(request_id) / "staging"
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -1087,7 +1453,9 @@ def _format_choice(
         format_id = item.get("format_id")
         if not format_id:
             continue
-        size = _finite_float(item.get("filesize")) or _finite_float(item.get("filesize_approx"))
+        size = _finite_float(item.get("filesize")) or _finite_float(
+            item.get("filesize_approx")
+        )
         if size is None and window_seconds is not None:
             bitrate = _finite_float(item.get("tbr"))
             if bitrate is not None:
@@ -1118,7 +1486,13 @@ def _format_choice(
 def _artifact_from_store(store: Any, path: Path, *, metadata: Mapping[str, Any]) -> Any:
     if store is None:
         return path
-    methods = ("add_artifact", "register_artifact", "create_artifact", "persist_artifact", "add_file")
+    methods = (
+        "add_artifact",
+        "register_artifact",
+        "create_artifact",
+        "persist_artifact",
+        "add_file",
+    )
     for method_name in methods:
         method = getattr(store, method_name, None)
         if not callable(method):
@@ -1154,7 +1528,9 @@ class MediaAcquirer:
         self.progress_hook = progress_hook
         self.ffmpeg_bin = ffmpeg_bin
 
-    def acquire_window(self, inspection: SourceInspection, request: Any, store: Any = None) -> Any:
+    def acquire_window(
+        self, inspection: SourceInspection, request: Any, store: Any = None
+    ) -> Any:
         start, end = _request_window(request)
         max_bytes = min(
             _request_limit(request, "max_download_bytes", 268_435_456),
@@ -1162,8 +1538,15 @@ class MediaAcquirer:
         )
         staging = _store_stage_directory(store, request)
         if inspection.is_url or _source_is_url(inspection.source):
-            return self._acquire_url(inspection, request, store, staging, start, end, max_bytes)
-        path = _validate_local_path(_source_path(inspection.source) or Path(inspection.source), self.settings)
+            _validate_network_url(
+                inspection.source, resolve_dns=(self.downloader is None)
+            )
+            return self._acquire_url(
+                inspection, request, store, staging, start, end, max_bytes
+            )
+        path = _validate_local_path(
+            _source_path(inspection.source) or Path(inspection.source), self.settings
+        )
         return self._acquire_local(path, request, store, staging, start, end, max_bytes)
 
     def _acquire_local(
@@ -1177,10 +1560,17 @@ class MediaAcquirer:
         max_bytes: int,
     ) -> Any:
         timeout_seconds = _request_limit(request, "timeout_seconds", 600)
-        ffmpeg = self.ffmpeg_bin or _settings_value(self.settings, "ffmpeg_bin", "ffmpeg") or "ffmpeg"
+        ffmpeg = (
+            self.ffmpeg_bin
+            or _settings_value(self.settings, "ffmpeg_bin", "ffmpeg")
+            or "ffmpeg"
+        )
         output = staging / "media-window.mkv"
         command = [
             str(ffmpeg),
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,pipe,crypto,data",
             "-v",
             "error",
             "-y",
@@ -1204,11 +1594,26 @@ class MediaAcquirer:
                 timeout=float(timeout_seconds),
             )
         except FileNotFoundError as exc:
-            raise _failure("TOOL_UNAVAILABLE", "ffmpeg is not available", stage="acquire_media", cause=exc) from exc
+            raise _failure(
+                "TOOL_UNAVAILABLE",
+                "ffmpeg is not available",
+                stage="acquire_media",
+                cause=exc,
+            ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise _failure("TIMEOUT", "local media extraction timed out", stage="acquire_media", cause=exc) from exc
+            raise _failure(
+                "TIMEOUT",
+                "local media extraction timed out",
+                stage="acquire_media",
+                cause=exc,
+            ) from exc
         except OSError as exc:
-            raise _failure("TOOL_UNAVAILABLE", "ffmpeg could not be started", stage="acquire_media", cause=exc) from exc
+            raise _failure(
+                "TOOL_UNAVAILABLE",
+                "ffmpeg could not be started",
+                stage="acquire_media",
+                cause=exc,
+            ) from exc
         returncode, _, stderr = _command_output(result)
         if returncode:
             raise _failure(
@@ -1218,7 +1623,11 @@ class MediaAcquirer:
                 diagnostics=[_text(stderr)],
             )
         if not output.exists() or _format_size(output) <= 0:
-            raise _failure("MEDIA_DECODE_FAILED", "ffmpeg produced no media output", stage="acquire_media")
+            raise _failure(
+                "MEDIA_DECODE_FAILED",
+                "ffmpeg produced no media output",
+                stage="acquire_media",
+            )
         if _format_size(output) > max_bytes:
             with contextlib.suppress(OSError):
                 output.unlink()
@@ -1230,7 +1639,11 @@ class MediaAcquirer:
         return _artifact_from_store(
             store,
             output,
-            metadata={"source": str(source), "start_seconds": start, "end_seconds": end},
+            metadata={
+                "source": str(source),
+                "start_seconds": start,
+                "end_seconds": end,
+            },
         )
 
     def _acquire_url(
@@ -1253,7 +1666,8 @@ class MediaAcquirer:
             inspection.formats,
             max_bytes,
             need_video=bool({"frames", "ocr"} & task_names),
-            need_audio=bool({"vad"} & task_names) or ("transcript" in task_names and not has_captions),
+            need_audio=bool({"vad"} & task_names)
+            or ("transcript" in task_names and not has_captions),
             window_seconds=end - start,
         )
         output_template = str(staging / "media.%(ext)s")
@@ -1264,17 +1678,27 @@ class MediaAcquirer:
 
         def hook(status: Mapping[str, Any]) -> None:
             if time.monotonic() > deadline:
-                raise _failure("TIMEOUT", "URL media acquisition timed out", stage="acquire_media")
+                raise _failure(
+                    "TIMEOUT", "URL media acquisition timed out", stage="acquire_media"
+                )
             if self.progress_hook is not None:
                 self.progress_hook(status)
             downloaded_bytes = _finite_float(status.get("downloaded_bytes"), 0.0) or 0.0
             if downloaded_bytes > max_bytes:
-                raise _failure("DOWNLOAD_LIMIT_EXCEEDED", "download exceeded max_download_bytes", stage="acquire_media")
+                raise _failure(
+                    "DOWNLOAD_LIMIT_EXCEEDED",
+                    "download exceeded max_download_bytes",
+                    stage="acquire_media",
+                )
             filename = status.get("filename")
             if filename:
                 candidate = Path(str(filename))
                 if _format_size(candidate) > max_bytes:
-                    raise _failure("DOWNLOAD_LIMIT_EXCEEDED", "download exceeded max_download_bytes", stage="acquire_media")
+                    raise _failure(
+                        "DOWNLOAD_LIMIT_EXCEEDED",
+                        "download exceeded max_download_bytes",
+                        stage="acquire_media",
+                    )
 
         options: dict[str, Any] = {
             "quiet": True,
@@ -1292,12 +1716,13 @@ class MediaAcquirer:
             "writeautomaticsub": False,
             "getcomments": False,
             "socket_timeout": timeout_seconds,
+            "logger": _MuffledLogger(),
         }
         # yt-dlp's Python API uses ``download_ranges`` for section-bounded
         # downloads.  Keep the textual option as a compatibility hint for
         # injected downloaders that inspect options without importing yt-dlp.
         try:
-            from yt_dlp.utils import download_range_func  # type: ignore
+            from yt_dlp.utils import download_range_func
 
             options["download_ranges"] = download_range_func(None, [(start, end)])
         except (ImportError, AttributeError, TypeError):
@@ -1309,29 +1734,63 @@ class MediaAcquirer:
         except SourceBackendFailure:
             raise
         except FileNotFoundError as exc:
-            raise _failure("TOOL_UNAVAILABLE", "yt-dlp is not available", stage="acquire_media", cause=exc) from exc
+            raise _failure(
+                "TOOL_UNAVAILABLE",
+                "yt-dlp is not available",
+                stage="acquire_media",
+                cause=exc,
+            ) from exc
         except Exception as exc:
-            raise _failure("MEDIA_DECODE_FAILED", "URL media acquisition failed", stage="acquire_media", diagnostics=[_text(exc)], cause=exc) from exc
+            raise _failure(
+                "MEDIA_DECODE_FAILED",
+                "URL media acquisition failed",
+                stage="acquire_media",
+                diagnostics=[_text(exc)],
+                cause=exc,
+            ) from exc
         for candidate in staging.iterdir():
             if candidate.is_file() and not candidate.name.endswith((".part", ".ytdl")):
                 downloaded.append(candidate)
         if not downloaded:
-            raise _failure("MEDIA_DECODE_FAILED", "yt-dlp produced no media output", stage="acquire_media")
-        downloaded.sort(key=lambda item: (_format_size(item) <= 0, -_format_size(item), item.name))
+            raise _failure(
+                "MEDIA_DECODE_FAILED",
+                "yt-dlp produced no media output",
+                stage="acquire_media",
+            )
+        downloaded.sort(
+            key=lambda item: (_format_size(item) <= 0, -_format_size(item), item.name)
+        )
         output = downloaded[0]
         size = _format_size(output)
         if size <= 0:
-            raise _failure("MEDIA_DECODE_FAILED", "downloaded media output is empty", stage="acquire_media")
+            raise _failure(
+                "MEDIA_DECODE_FAILED",
+                "downloaded media output is empty",
+                stage="acquire_media",
+            )
         if size > max_bytes:
             with contextlib.suppress(OSError):
                 output.unlink()
-            raise _failure("DOWNLOAD_LIMIT_EXCEEDED", "download exceeded max_download_bytes", stage="acquire_media")
-        return _artifact_from_store(store, output, metadata={"source": source, "format_id": format_id, "start_seconds": start, "end_seconds": end})
+            raise _failure(
+                "DOWNLOAD_LIMIT_EXCEEDED",
+                "download exceeded max_download_bytes",
+                stage="acquire_media",
+            )
+        return _artifact_from_store(
+            store,
+            output,
+            metadata={
+                "source": source,
+                "format_id": format_id,
+                "start_seconds": start,
+                "end_seconds": end,
+            },
+        )
 
     def _download(self, source: str, options: Mapping[str, Any]) -> Any:
         provider = self.downloader
         if provider is None:
-            import yt_dlp  # type: ignore  # lazy optional provider import
+            import yt_dlp  # lazy optional provider import
 
             with yt_dlp.YoutubeDL(dict(options)) as ydl:
                 return ydl.download([source])
@@ -1341,7 +1800,13 @@ class MediaAcquirer:
         if target is None:
             raise TypeError("downloader has no download method")
         attempts: tuple[tuple[tuple[Any, ...], dict[str, Any]], ...] = (
-            ((source,), {"options": dict(options), "progress_hook": options.get("progress_hooks", [None])[0]}),
+            (
+                (source,),
+                {
+                    "options": dict(options),
+                    "progress_hook": options.get("progress_hooks", [None])[0],
+                },
+            ),
             ((source,), {"options": dict(options)}),
             (([source],), dict(options)),
             ((source,), {}),

@@ -6,7 +6,7 @@ import shutil
 import threading
 import time
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +20,7 @@ from .backends.source import CaptionResolver, MediaAcquirer, SourceInspector
 from .backends.vad import SileroVadBackend
 from .contracts import (
     AnalysisError,
+    AnalysisMetrics,
     AnalysisResult,
     AnalysisSummary,
     AnalyzeVideoRequest,
@@ -27,8 +28,15 @@ from .contracts import (
     ErrorCode,
     StageRecord,
 )
+from .logging import logger
 from .planner import Capabilities, PlanningFailure, build_execution_plan
 from .settings import get_settings
+from .telemetry import (
+    compute_download_throughput_mbps,
+    compute_ocr_fps,
+    compute_rtf,
+    get_peak_rss_mb,
+)
 
 
 def _now() -> str:
@@ -72,7 +80,9 @@ def _error_from_exception(exc: BaseException, stage: str) -> AnalysisError:
         if candidate.stage == "unknown":
             return candidate.model_copy(update={"stage": stage})
         return candidate
-    code = _error_code(getattr(candidate, "code", getattr(exc, "code", "INTERNAL_STAGE_FAILED")))
+    code = _error_code(
+        getattr(candidate, "code", getattr(exc, "code", "INTERNAL_STAGE_FAILED"))
+    )
     return AnalysisError(
         code=code,
         stage=stage,
@@ -94,7 +104,9 @@ def _is_ref(value: Any) -> bool:
 
 
 class VideoAnalyzerFailure(RuntimeError):
-    def __init__(self, error: AnalysisError, *, manifest_uri: str | None = None) -> None:
+    def __init__(
+        self, error: AnalysisError, *, manifest_uri: str | None = None
+    ) -> None:
         self.error = error
         self.analysis_error = error
         self.failure = error
@@ -114,6 +126,7 @@ class AnalysisContext:
     cancel_event: threading.Event | None = None
     deadline: float | None = None
     max_workers: int = 2
+    progress_callback: Any = None
     _provided: set[str] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -161,7 +174,9 @@ def _url_policy(enabled: bool) -> Iterator[None]:
 
 def _available_binary(configured: Any, name: str) -> bool:
     if configured:
-        return Path(str(configured)).is_file() or shutil.which(str(configured)) is not None
+        return (
+            Path(str(configured)).is_file() or shutil.which(str(configured)) is not None
+        )
     return shutil.which(name) is not None
 
 
@@ -176,16 +191,44 @@ def _capabilities(context: AnalysisContext, inspection: Any) -> Capabilities:
         ffmpeg=media_injected or _available_binary(settings.ffmpeg_bin, "ffmpeg"),
         asr=asr_injected or importlib.util.find_spec("faster_whisper") is not None,
         vad=vad_injected or importlib.util.find_spec("silero_vad") is not None,
-        tesseract=ocr_injected or _available_binary(settings.tesseract_bin, "tesseract"),
+        tesseract=ocr_injected
+        or _available_binary(settings.tesseract_bin, "tesseract"),
         captions=True,
     )
 
 
 def _base_stage_records() -> list[dict[str, Any]]:
     return [
-        {"name": "validate_source", "status": "planned", "dependencies": [], "settings": {}, "warnings": [], "input_artifact_ids": [], "output_artifact_ids": [], "error": None},
-        {"name": "inspect_source", "status": "planned", "dependencies": ["validate_source"], "settings": {}, "warnings": [], "input_artifact_ids": [], "output_artifact_ids": [], "error": None},
-        {"name": "persist_plan", "status": "planned", "dependencies": ["inspect_source"], "settings": {}, "warnings": [], "input_artifact_ids": [], "output_artifact_ids": [], "error": None},
+        {
+            "name": "validate_source",
+            "status": "planned",
+            "dependencies": [],
+            "settings": {},
+            "warnings": [],
+            "input_artifact_ids": [],
+            "output_artifact_ids": [],
+            "error": None,
+        },
+        {
+            "name": "inspect_source",
+            "status": "planned",
+            "dependencies": ["validate_source"],
+            "settings": {},
+            "warnings": [],
+            "input_artifact_ids": [],
+            "output_artifact_ids": [],
+            "error": None,
+        },
+        {
+            "name": "persist_plan",
+            "status": "planned",
+            "dependencies": ["inspect_source"],
+            "settings": {},
+            "warnings": [],
+            "input_artifact_ids": [],
+            "output_artifact_ids": [],
+            "error": None,
+        },
     ]
 
 
@@ -210,7 +253,9 @@ def _refs(store: ArtifactStore) -> list[ArtifactRef]:
     return result
 
 
-def _publish_value(store: ArtifactStore, value: Any, *, name: str, media_type: str) -> ArtifactRef:
+def _publish_value(
+    store: ArtifactStore, value: Any, *, name: str, media_type: str
+) -> ArtifactRef:
     if _is_ref(value):
         return value if isinstance(value, ArtifactRef) else ArtifactRef(**dict(value))
     if isinstance(value, (bytes, bytearray)):
@@ -291,16 +336,22 @@ def _summary(
     )
 
 
-def _failure_with_manifest(error: AnalysisError, store: ArtifactStore) -> VideoAnalyzerFailure:
+def _failure_with_manifest(
+    error: AnalysisError, store: ArtifactStore
+) -> VideoAnalyzerFailure:
     updated = error.model_copy(
         update={"manifest_uri": store.manifest_uri, "artifact_refs": _refs(store)}
     )
     return VideoAnalyzerFailure(updated, manifest_uri=store.manifest_uri)
 
 
-def _mark_interrupt(store: ArtifactStore, code: str, status: Literal["cancelled", "timed_out"]) -> VideoAnalyzerFailure:
+def _mark_interrupt(
+    store: ArtifactStore, code: str, status: Literal["cancelled", "timed_out"]
+) -> VideoAnalyzerFailure:
     records = _stage_records(store)
-    pending = next((record for record in records if record.get("status") == "planned"), None)
+    pending = next(
+        (record for record in records if record.get("status") == "planned"), None
+    )
     if pending is None and records:
         pending = records[-1]
     interrupt_status: Literal["cancelled", "timed_out"] = status
@@ -361,25 +412,36 @@ def analyze_video(
             raise _failure_with_manifest(error, store) from exc
 
 
-def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store: ArtifactStore) -> AnalysisResult:
+def _run_analysis(
+    request: AnalyzeVideoRequest, context: AnalysisContext, store: ArtifactStore
+) -> AnalysisResult:
+    overall_started = time.monotonic()
     inspection: Any = None
     caption: Any = None
     try:
         inspection = context.source_inspector.inspect(request)
         if "transcript" in _requested_tasks(request):
             caption = context.caption_resolver.resolve(inspection, request)
-        plan = build_execution_plan(request, inspection, _capabilities(context, inspection))
+        plan = build_execution_plan(
+            request, inspection, _capabilities(context, inspection)
+        )
     except PlanningFailure as exc:
         store.initialize_manifest(stages=_base_stage_records())
         raise _failure_with_manifest(exc.error, store) from exc
     except Exception as exc:
         store.initialize_manifest(stages=_base_stage_records())
-        raise _failure_with_manifest(_error_from_exception(exc, "inspect_source"), store) from exc
+        raise _failure_with_manifest(
+            _error_from_exception(exc, "inspect_source"), store
+        ) from exc
 
     store.write_plan(plan)
     store.initialize_manifest(stages=getattr(plan, "stages", []))
 
-    deadline = context.deadline if context.deadline is not None else time.monotonic() + request.timeout_seconds
+    deadline = (
+        context.deadline
+        if context.deadline is not None
+        else time.monotonic() + request.timeout_seconds
+    )
     stage_records = _stage_records(store)
     by_name = {str(record.get("name")): record for record in stage_records}
     outputs: dict[str, list[ArtifactRef]] = {}
@@ -413,7 +475,9 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
         )
         return started
 
-    def mark_done(record: dict[str, Any], started: float, refs: list[ArtifactRef] | None = None) -> None:
+    def mark_done(
+        record: dict[str, Any], started: float, refs: list[ArtifactRef] | None = None
+    ) -> None:
         record["status"] = "completed"
         record["end_timestamp"] = _now()
         record["elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
@@ -426,7 +490,9 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
             output_artifact_ids=record["output_artifact_ids"],
         )
 
-    def mark_failed(record: dict[str, Any], started: float, error: AnalysisError) -> None:
+    def mark_failed(
+        record: dict[str, Any], started: float, error: AnalysisError
+    ) -> None:
         record["status"] = "failed"
         record["end_timestamp"] = _now()
         record["elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
@@ -439,10 +505,29 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
             error=error,
         )
 
-    for record in stage_records:
+    for stage_idx, record in enumerate(stage_records, start=1):
         name = str(record.get("name"))
+        if context.progress_callback is not None:
+            with suppress(Exception):
+                context.progress_callback(
+                    name,
+                    float(stage_idx),
+                    float(len(stage_records)),
+                    f"Executing stage {name}",
+                )
+        logger.info(
+            "Executing stage %s (%d/%d) for request %s",
+            name,
+            stage_idx,
+            len(stage_records),
+            request.request_id,
+        )
         dependencies = set(record.get("dependencies", []))
-        if any(by_name.get(dep, {}).get("status") in {"failed", "skipped", "cancelled", "timed_out"} for dep in dependencies):
+        if any(
+            by_name.get(dep, {}).get("status")
+            in {"failed", "skipped", "cancelled", "timed_out"}
+            for dep in dependencies
+        ):
             record["status"] = "skipped"
             record["start_timestamp"] = record["start_timestamp"] or _now()
             record["end_timestamp"] = _now()
@@ -472,11 +557,25 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
                 rows = _segments(caption)
                 if not rows:
                     raise RuntimeError("caption transcript output was empty")
-                refs.append(store.write_jsonl(rows, name="transcript.jsonl", metadata={"caption_kind": _field(caption, "kind", None)}))
-                refs.append(store.write_text(_vtt(rows), name="captions.vtt", media_type="text/vtt"))
+                refs.append(
+                    store.write_jsonl(
+                        rows,
+                        name="transcript.jsonl",
+                        metadata={"caption_kind": _field(caption, "kind", None)},
+                    )
+                )
+                refs.append(
+                    store.write_text(
+                        _vtt(rows), name="captions.vtt", media_type="text/vtt"
+                    )
+                )
             elif name == "acquire_media":
-                acquired = context.media_acquirer.acquire_window(inspection, request, store)
-                ref = _publish_value(store, acquired, name="media-window.mkv", media_type="video/mp4")
+                acquired = context.media_acquirer.acquire_window(
+                    inspection, request, store
+                )
+                ref = _publish_value(
+                    store, acquired, name="media-window.mkv", media_type="video/mp4"
+                )
                 refs.append(ref)
                 values["media"] = store.resolve_artifact_path(ref)
             elif name == "probe":
@@ -484,26 +583,59 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
                 refs.append(store.write_json(probe, name="probe.json"))
                 values["probe"] = probe
             elif name == "extract_audio":
-                audio = context.media_backend.extract_audio(values["media"], request, store)
-                ref = _publish_value(store, audio, name="audio.wav", media_type="audio/wav")
+                audio = context.media_backend.extract_audio(
+                    values["media"], request, store
+                )
+                ref = _publish_value(
+                    store, audio, name="audio.wav", media_type="audio/wav"
+                )
                 refs.append(ref)
                 values["audio"] = store.resolve_artifact_path(ref)
             elif name == "vad":
                 vad = context.vad_backend.detect(values["audio"], request)
                 intervals = _rows(vad, "intervals")
-                refs.append(store.write_json({"intervals": intervals, "metadata": _field(vad, "metadata", {})}, name="vad.json"))
+                refs.append(
+                    store.write_json(
+                        {
+                            "intervals": intervals,
+                            "metadata": _field(vad, "metadata", {}),
+                        },
+                        name="vad.json",
+                    )
+                )
             elif name == "transcribe":
                 transcript = context.asr_backend.transcribe(values["audio"], request)
                 rows = _segments(transcript)
                 if not rows:
                     raise RuntimeError("transcript artifact was empty")
-                refs.append(store.write_jsonl(rows, name="transcript.jsonl", metadata={"provider": _field(_field(transcript, "metadata", {}), "provider", "faster-whisper")}))
+                refs.append(
+                    store.write_jsonl(
+                        rows,
+                        name="transcript.jsonl",
+                        metadata={
+                            "provider": _field(
+                                _field(transcript, "metadata", {}),
+                                "provider",
+                                "faster-whisper",
+                            )
+                        },
+                    )
+                )
             elif name == "extract_frames":
-                frames = context.media_backend.extract_frames(values["media"], request, store)
+                frames = context.media_backend.extract_frames(
+                    values["media"], request, store
+                )
                 if not frames:
                     raise RuntimeError("frame output was empty")
                 for index, frame in enumerate(frames, start=1):
-                    refs.append(_publish_value(store, frame, name=f"frames/frame-{index:04d}.jpg", media_type="image/jpeg"))
+                    refs.append(
+                        _publish_value(
+                            store,
+                            frame,
+                            name=f"frames/frame-{index:04d}.jpg",
+                            media_type="image/jpeg",
+                        )
+                    )
                 values["frames"] = refs.copy()
             elif name == "ocr":
                 frame_refs = values.get("frames", [])
@@ -518,7 +650,10 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
                     rows = _rows(ocr, "rows")
                     if not rows:
                         raise RuntimeError("OCR output was empty")
-                    records.extend({"frame_artifact_id": frame_ref.artifact_id, **row} for row in rows)
+                    records.extend(
+                        {"frame_artifact_id": frame_ref.artifact_id, **row}
+                        for row in rows
+                    )
                 if not records:
                     raise RuntimeError("OCR output was empty")
                 refs.append(store.write_jsonl(records, name="ocr.jsonl"))
@@ -530,13 +665,19 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
             mark_done(record, started, refs)
         except (VideoAnalyzerFailure, ArtifactStoreFailure) as exc:
             error = exc.error
-            if isinstance(exc, ArtifactStoreFailure) and error.stage in {"persist_artifact", "artifact_store"}:
+            if isinstance(exc, ArtifactStoreFailure) and error.stage in {
+                "persist_artifact",
+                "artifact_store",
+            }:
                 error = error.model_copy(update={"stage": name})
             mark_failed(record, started, error)
             task = stage_to_task.get(name)
             if task:
                 failed_tasks.add(task)
-            if task == "transcript" or (task in {"metadata", "vad", "frames", "ocr"} and not (completed_tasks - {"metadata"})):
+            if task == "transcript" or (
+                task in {"metadata", "vad", "frames", "ocr"}
+                and not (completed_tasks - {"metadata"})
+            ):
                 raise _failure_with_manifest(error, store) from exc
         except Exception as exc:
             error = _error_from_exception(exc, name)
@@ -544,12 +685,20 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
             task = stage_to_task.get(name)
             if task:
                 failed_tasks.add(task)
-            if task == "transcript" or (task in {"metadata", "vad", "frames", "ocr"} and not (completed_tasks - {"metadata"})):
+            if task == "transcript" or (
+                task in {"metadata", "vad", "frames", "ocr"}
+                and not (completed_tasks - {"metadata"})
+            ):
                 raise _failure_with_manifest(error, store) from exc
 
     # A completed caption/transcript stage is the transcript task's success marker.
     if "transcript" in requested and "transcript" not in completed_tasks:
-        error = AnalysisError(code=ErrorCode.INTERNAL_STAGE_FAILED, stage="transcript", message="requested transcript did not complete", retryable=False)
+        error = AnalysisError(
+            code=ErrorCode.INTERNAL_STAGE_FAILED,
+            stage="transcript",
+            message="requested transcript did not complete",
+            retryable=False,
+        )
         raise _failure_with_manifest(error, store)
     if "metadata" in requested and "metadata" not in completed_tasks:
         failed_tasks.add("metadata")
@@ -561,11 +710,58 @@ def _run_analysis(request: AnalyzeVideoRequest, context: AnalysisContext, store:
         failed_tasks.add("vad")
 
     status: Literal["completed", "partial"] = "partial" if failed_tasks else "completed"
+
+    total_elapsed_ms = round((time.monotonic() - overall_started) * 1000.0, 2)
+    stage_elapsed: dict[str, float] = {}
+    for record in _stage_records(store):
+        stage_name = str(record.get("name", ""))
+        stage_ms = float(record.get("elapsed_ms") or 0.0)
+        if stage_name:
+            stage_elapsed[stage_name] = stage_ms
+
+    window_sec = max(
+        0.001, float(request.time_range.end_seconds - request.time_range.start_seconds)
+    )
+    rtf: float | None = None
+    if "transcribe" in stage_elapsed and stage_elapsed["transcribe"] > 0:
+        rtf = compute_rtf(stage_elapsed["transcribe"] / 1000.0, window_sec)
+    elif "captions" in stage_elapsed and stage_elapsed["captions"] > 0:
+        rtf = compute_rtf(stage_elapsed["captions"] / 1000.0, window_sec)
+
+    ocr_fps: float | None = None
+    if "ocr" in stage_elapsed and "frames" in values:
+        ocr_fps = compute_ocr_fps(
+            len(values.get("frames", [])), stage_elapsed["ocr"] / 1000.0
+        )
+
+    throughput_mbps: float | None = None
+    if "acquire_media" in stage_elapsed and "media" in values:
+        try:
+            acquired_path = Path(values["media"])
+            if acquired_path.is_file():
+                throughput_mbps = compute_download_throughput_mbps(
+                    acquired_path.stat().st_size,
+                    stage_elapsed["acquire_media"] / 1000.0,
+                )
+        except OSError:
+            pass
+
+    metrics = AnalysisMetrics(
+        total_elapsed_ms=total_elapsed_ms,
+        peak_rss_mb=get_peak_rss_mb(),
+        rtf=rtf,
+        ocr_fps=ocr_fps,
+        download_throughput_mbps=throughput_mbps,
+        stage_elapsed_ms=stage_elapsed,
+    )
+    store.set_metrics(metrics.model_dump())
+
     result = AnalysisResult(
         status=status,
         summary=_summary(request, inspection, completed_tasks, failed_tasks, caption),
         stages=[StageRecord(**record) for record in _stage_records(store)],
         warnings=[f"stage failed: {name}" for name in sorted(failed_tasks)],
+        metrics=metrics,
         manifest_uri=store.manifest_uri,
         artifacts=_refs(store),
     )

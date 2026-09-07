@@ -12,7 +12,9 @@ from ..settings import get_settings
 
 
 def _error(code: str, message: str, *, stage: str = "media") -> AnalysisError:
-    return AnalysisError(code=ErrorCode(code), stage=stage, message=message, retryable=False)
+    return AnalysisError(
+        code=ErrorCode(code), stage=stage, message=message, retryable=False
+    )
 
 
 class MediaBackendFailure(RuntimeError):
@@ -54,7 +56,11 @@ def _work_directory(
     if output_directory is not None:
         directory = Path(output_directory)
     elif store is not None:
-        directory = Path(getattr(store, "staging_directory", getattr(store, "run_directory", Path.cwd())))
+        directory = Path(
+            getattr(
+                store, "staging_directory", getattr(store, "run_directory", Path.cwd())
+            )
+        )
     else:
         request_output = _field(request, "output_directory", None)
         request_id = _field(request, "request_id", "run")
@@ -63,12 +69,17 @@ def _work_directory(
     return directory
 
 
-def _timeout(request: Any) -> float | None:
+DEFAULT_MEDIA_TIMEOUT: float = 300.0
+
+
+def _timeout(request: Any) -> float:
     value = _field(request, "timeout_seconds", None)
     try:
-        return float(value) if value is not None else None
+        if value is not None:
+            return float(value)
     except (TypeError, ValueError):
-        return None
+        pass
+    return DEFAULT_MEDIA_TIMEOUT
 
 
 def _run_command(
@@ -99,8 +110,16 @@ def _run_command(
 
 def _result(result: Any) -> tuple[int, str, str]:
     if isinstance(result, Mapping):
-        return int(result.get("returncode", result.get("code", 0))), _text(result.get("stdout")), _text(result.get("stderr"))
-    return int(getattr(result, "returncode", 0)), _text(getattr(result, "stdout", "")), _text(getattr(result, "stderr", ""))
+        return (
+            int(result.get("returncode", result.get("code", 0))),
+            _text(result.get("stdout")),
+            _text(result.get("stderr")),
+        )
+    return (
+        int(getattr(result, "returncode", 0)),
+        _text(getattr(result, "stdout", "")),
+        _text(getattr(result, "stderr", "")),
+    )
 
 
 def _settings_value(settings: Any, name: str, default: str) -> str:
@@ -131,15 +150,28 @@ class FFmpegBackend:
     ) -> None:
         self.runner = runner
         self.settings = settings
-        self.ffmpeg_bin = str(ffmpeg_bin) if ffmpeg_bin else _settings_value(settings, "ffmpeg_bin", "ffmpeg")
-        self.ffprobe_bin = str(ffprobe_bin) if ffprobe_bin else _settings_value(settings, "ffprobe_bin", "ffprobe")
+        self.ffmpeg_bin = (
+            str(ffmpeg_bin)
+            if ffmpeg_bin
+            else _settings_value(settings, "ffmpeg_bin", "ffmpeg")
+        )
+        self.ffprobe_bin = (
+            str(ffprobe_bin)
+            if ffprobe_bin
+            else _settings_value(settings, "ffprobe_bin", "ffprobe")
+        )
 
     def probe(self, media: Any, request: Any = None, **_: Any) -> dict[str, Any]:
         source = _path(media)
         if not source.is_file():
-            raise MediaBackendFailure("ARTIFACT_NOT_FOUND", "media input does not exist", stage="probe")
+            raise MediaBackendFailure(
+                "ARTIFACT_NOT_FOUND", "media input does not exist", stage="probe"
+            )
         command = [
             self.ffprobe_bin,
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,pipe,crypto,data",
             "-v",
             "error",
             "-show_streams",
@@ -151,18 +183,30 @@ class FFmpegBackend:
         try:
             result = _run_command(self.runner, command, timeout=_timeout(request))
         except FileNotFoundError as exc:
-            raise MediaBackendFailure("TOOL_UNAVAILABLE", "ffprobe is unavailable", stage="probe") from exc
+            raise MediaBackendFailure(
+                "TOOL_UNAVAILABLE", "ffprobe is unavailable", stage="probe"
+            ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise MediaBackendFailure("TIMEOUT", "ffprobe timed out", stage="probe") from exc
+            raise MediaBackendFailure(
+                "TIMEOUT", "ffprobe timed out", stage="probe"
+            ) from exc
         code, stdout, stderr = _result(result)
         if code:
-            raise MediaBackendFailure("MEDIA_DECODE_FAILED", f"ffprobe failed: {stderr[:512]}", stage="probe")
+            raise MediaBackendFailure(
+                "MEDIA_DECODE_FAILED", f"ffprobe failed: {stderr[:512]}", stage="probe"
+            )
         try:
             value = json.loads(stdout)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise MediaBackendFailure("MEDIA_DECODE_FAILED", "ffprobe returned malformed JSON", stage="probe") from exc
+            raise MediaBackendFailure(
+                "MEDIA_DECODE_FAILED", "ffprobe returned malformed JSON", stage="probe"
+            ) from exc
         if not isinstance(value, dict):
-            raise MediaBackendFailure("MEDIA_DECODE_FAILED", "ffprobe returned an invalid document", stage="probe")
+            raise MediaBackendFailure(
+                "MEDIA_DECODE_FAILED",
+                "ffprobe returned an invalid document",
+                stage="probe",
+            )
         return value
 
     def extract_audio(
@@ -173,13 +217,20 @@ class FFmpegBackend:
         *,
         output_directory: Path | None = None,
     ) -> Any:
-        if isinstance(request, (str, Path)) and store is None and output_directory is None:
+        if (
+            isinstance(request, (str, Path))
+            and store is None
+            and output_directory is None
+        ):
             output_directory, request = Path(request), None
         source = _path(media)
         work = _work_directory(request, store, output_directory)
         output = work / "audio.wav"
         command = [
             self.ffmpeg_bin,
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,pipe,crypto,data",
             "-y",
             "-hide_banner",
             "-loglevel",
@@ -210,29 +261,49 @@ class FFmpegBackend:
         max_frame_width: int | None = None,
         output_directory: Path | None = None,
     ) -> list[Any]:
-        if isinstance(request, (str, Path)) and store is None and output_directory is None:
+        if (
+            isinstance(request, (str, Path))
+            and store is None
+            and output_directory is None
+        ):
             output_directory, request = Path(request), None
         source = _path(media)
         width = int(max_frame_width or _field(request, "max_frame_width", 1280))
         max_frames = int(_field(request, "max_frames", 6))
-        timestamps = timestamps_seconds or _field(request, "frame_timestamps_seconds", None)
+        timestamps = timestamps_seconds or _field(
+            request, "frame_timestamps_seconds", None
+        )
         if timestamps is None:
             time_range = _field(request, "time_range", None)
             start = float(_field(time_range, "start_seconds", 0.0))
             end = float(_field(time_range, "end_seconds", 180.0))
-            timestamps = tuple(start + (end - start) * i / (max_frames + 1) for i in range(1, max_frames + 1))
+            timestamps = tuple(
+                start + (end - start) * i / (max_frames + 1)
+                for i in range(1, max_frames + 1)
+            )
         timestamps = tuple(float(value) for value in timestamps)
         if len(timestamps) == 0 or len(timestamps) > min(max_frames, 12):
-            raise MediaBackendFailure("FRAME_LIMIT_EXCEEDED", "requested frame count is outside bounds", stage="extract_frames")
+            raise MediaBackendFailure(
+                "FRAME_LIMIT_EXCEEDED",
+                "requested frame count is outside bounds",
+                stage="extract_frames",
+            )
         work = _work_directory(request, store, output_directory) / "frames"
         work.mkdir(parents=True, exist_ok=True)
         refs: list[Any] = []
         for index, timestamp in enumerate(timestamps, start=1):
             if not math.isfinite(timestamp) or timestamp < 0:
-                raise MediaBackendFailure("FRAME_LIMIT_EXCEEDED", "frame timestamp is invalid", stage="extract_frames")
+                raise MediaBackendFailure(
+                    "FRAME_LIMIT_EXCEEDED",
+                    "frame timestamp is invalid",
+                    stage="extract_frames",
+                )
             output = work / f"frame-{index:04d}.jpg"
             command = [
                 self.ffmpeg_bin,
+                "-nostdin",
+                "-protocol_whitelist",
+                "file,pipe,crypto,data",
                 "-y",
                 "-hide_banner",
                 "-loglevel",
@@ -248,21 +319,38 @@ class FFmpegBackend:
                 str(output),
             ]
             self._run_media(command, output, request, "extract_frames")
-            refs.append(_publish(store, output, name=f"frames/frame-{index:04d}.jpg", media_type="image/jpeg"))
+            refs.append(
+                _publish(
+                    store,
+                    output,
+                    name=f"frames/frame-{index:04d}.jpg",
+                    media_type="image/jpeg",
+                )
+            )
         return refs
 
-    def _run_media(self, command: list[str], output: Path, request: Any, stage: str) -> None:
+    def _run_media(
+        self, command: list[str], output: Path, request: Any, stage: str
+    ) -> None:
         try:
             result = _run_command(self.runner, command, timeout=_timeout(request))
         except FileNotFoundError as exc:
-            raise MediaBackendFailure("TOOL_UNAVAILABLE", "ffmpeg is unavailable", stage=stage) from exc
+            raise MediaBackendFailure(
+                "TOOL_UNAVAILABLE", "ffmpeg is unavailable", stage=stage
+            ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise MediaBackendFailure("TIMEOUT", "ffmpeg timed out", stage=stage) from exc
+            raise MediaBackendFailure(
+                "TIMEOUT", "ffmpeg timed out", stage=stage
+            ) from exc
         code, _, stderr = _result(result)
         if code:
-            raise MediaBackendFailure("MEDIA_DECODE_FAILED", f"ffmpeg failed: {stderr[:512]}", stage=stage)
+            raise MediaBackendFailure(
+                "MEDIA_DECODE_FAILED", f"ffmpeg failed: {stderr[:512]}", stage=stage
+            )
         if not output.is_file() or output.stat().st_size <= 0:
-            raise MediaBackendFailure("MEDIA_DECODE_FAILED", "ffmpeg produced an empty output", stage=stage)
+            raise MediaBackendFailure(
+                "MEDIA_DECODE_FAILED", "ffmpeg produced an empty output", stage=stage
+            )
 
 
 __all__ = ["FFmpegBackend", "MediaBackendFailure"]

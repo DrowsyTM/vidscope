@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..contracts import AnalysisError, ErrorCode
 from ..settings import get_settings
@@ -17,7 +17,9 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
 
 
 def _error(code: str, message: str) -> AnalysisError:
-    return AnalysisError(code=ErrorCode(code), stage="transcribe", message=message, retryable=False)
+    return AnalysisError(
+        code=ErrorCode(code), stage="transcribe", message=message, retryable=False
+    )
 
 
 class AsrBackendFailure(RuntimeError):
@@ -51,10 +53,12 @@ class FasterWhisperBackend:
         if self.model_factory is not None:
             return self.model_factory
         try:
-            from faster_whisper import WhisperModel  # type: ignore
+            from faster_whisper import WhisperModel
         except (ImportError, ModuleNotFoundError) as exc:
-            raise AsrBackendFailure("ASR_MODEL_UNAVAILABLE", "faster-whisper is unavailable") from exc
-        return WhisperModel
+            raise AsrBackendFailure(
+                "ASR_MODEL_UNAVAILABLE", "faster-whisper is unavailable"
+            ) from exc
+        return cast(Callable[..., Any], WhisperModel)
 
     def transcribe(
         self,
@@ -63,9 +67,13 @@ class FasterWhisperBackend:
         *,
         language: str | None = None,
     ) -> TranscriptArtifact:
-        audio_path = Path(audio if isinstance(audio, (str, Path)) else _field(audio, "path", audio))
+        audio_path = Path(
+            audio if isinstance(audio, (str, Path)) else _field(audio, "path", audio)
+        )
         language_value = language or _field(request, "language", "en") or "en"
-        model_cache = _field(self.settings, "model_cache", None) or _field(get_settings(), "model_cache", None)
+        model_cache = _field(self.settings, "model_cache", None) or _field(
+            get_settings(), "model_cache", None
+        )
         if model_cache:
             cache = Path(model_cache).expanduser()
             cache.mkdir(parents=True, exist_ok=True)
@@ -82,7 +90,9 @@ class FasterWhisperBackend:
         except AsrBackendFailure:
             raise
         except Exception as exc:
-            raise AsrBackendFailure("ASR_MODEL_UNAVAILABLE", "faster-whisper model could not be loaded") from exc
+            raise AsrBackendFailure(
+                "ASR_MODEL_UNAVAILABLE", "faster-whisper model could not be loaded"
+            ) from exc
         try:
             segments_iter, info = model.transcribe(
                 str(audio_path),
@@ -116,9 +126,13 @@ class FasterWhisperBackend:
                     }
                 )
         except Exception as exc:
-            raise AsrBackendFailure("INTERNAL_STAGE_FAILED", "faster-whisper transcription failed") from exc
+            raise AsrBackendFailure(
+                "INTERNAL_STAGE_FAILED", "faster-whisper transcription failed"
+            ) from exc
         if not rows:
-            raise AsrBackendFailure("INTERNAL_STAGE_FAILED", "transcript output was empty")
+            raise AsrBackendFailure(
+                "INTERNAL_STAGE_FAILED", "transcript output was empty"
+            )
         metadata = {
             "provider": "faster-whisper",
             "model": "tiny.en",

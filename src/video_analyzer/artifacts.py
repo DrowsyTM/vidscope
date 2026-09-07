@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from .contracts import AnalysisError, ArtifactRef, ErrorCode, StageRecord
@@ -83,10 +83,11 @@ class RunManifest:
     stages: list[dict[str, Any]] = field(default_factory=list)
     artifacts: dict[str, dict[str, Any]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    metrics: dict[str, Any] | None = None
 
     def model_dump(self, *, mode: str = "json") -> dict[str, Any]:
         del mode
-        return {
+        data: dict[str, Any] = {
             "run_id": self.run_id,
             "request_id": self.request_id,
             "created_at": self.created_at,
@@ -96,6 +97,9 @@ class RunManifest:
             "artifacts": _json_value(self.artifacts),
             "warnings": list(self.warnings),
         }
+        if self.metrics is not None:
+            data["metrics"] = _json_value(self.metrics)
+        return data
 
 
 class ArtifactStore:
@@ -115,7 +119,9 @@ class ArtifactStore:
         self.output_directory = root.resolve(strict=False)
         self.request_id = request_id or uuid.uuid4().hex
         if not _RUN_ID_RE.fullmatch(self.request_id):
-            raise ArtifactStoreFailure(_error("OUTPUT_NOT_ALLOWED", "request id is not a safe run id"))
+            raise ArtifactStoreFailure(
+                _error("OUTPUT_NOT_ALLOWED", "request id is not a safe run id")
+            )
         self.run_id = self.request_id
         self.run_directory = self.output_directory / self.run_id
         self.run_dir = self.run_directory
@@ -142,7 +148,7 @@ class ArtifactStore:
 
     @property
     def manifest(self) -> dict[str, Any]:
-        return json.loads(json.dumps(self._manifest))
+        return cast(dict[str, Any], json.loads(json.dumps(self._manifest)))
 
     def create(self) -> ArtifactStore:
         if self.run_directory.exists():
@@ -150,11 +156,18 @@ class ArtifactStore:
                 occupied = any(self.run_directory.iterdir())
             except OSError as exc:
                 raise ArtifactStoreFailure(
-                    _error("OUTPUT_NOT_ALLOWED", "run directory cannot be inspected", diagnostics=[str(exc)])
+                    _error(
+                        "OUTPUT_NOT_ALLOWED",
+                        "run directory cannot be inspected",
+                        diagnostics=[str(exc)],
+                    )
                 ) from exc
             if occupied:
                 raise ArtifactStoreFailure(
-                    _error("OUTPUT_NOT_ALLOWED", "run directory already exists and is nonempty")
+                    _error(
+                        "OUTPUT_NOT_ALLOWED",
+                        "run directory already exists and is nonempty",
+                    )
                 )
         try:
             self.output_directory.mkdir(parents=True, exist_ok=True)
@@ -162,7 +175,11 @@ class ArtifactStore:
             self.staging_directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise ArtifactStoreFailure(
-                _error("OUTPUT_NOT_ALLOWED", "run directory cannot be created", diagnostics=[str(exc)])
+                _error(
+                    "OUTPUT_NOT_ALLOWED",
+                    "run directory cannot be created",
+                    diagnostics=[str(exc)],
+                )
             ) from exc
         self._created = True
         self._manifest = RunManifest(
@@ -179,7 +196,9 @@ class ArtifactStore:
 
     def _atomic_write(self, target: Path, payload: bytes) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        fd, temporary = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
         temporary_path = Path(temporary)
         try:
             with os.fdopen(fd, "wb") as stream:
@@ -245,7 +264,12 @@ class ArtifactStore:
                 target = item
                 break
         if target is None:
-            target = value or {"name": name, "dependencies": [], "settings": {}, "warnings": []}
+            target = value or {
+                "name": name,
+                "dependencies": [],
+                "settings": {},
+                "warnings": [],
+            }
             stages.append(target)
         if value is not None:
             target.clear()
@@ -255,6 +279,10 @@ class ArtifactStore:
         if error is not None:
             target["error"] = _json_value(error)
         target.update({key: _json_value(item) for key, item in updates.items()})
+        return self.write_manifest()
+
+    def set_metrics(self, metrics: Any) -> Path:
+        self._manifest["metrics"] = _json_value(metrics)
         return self.write_manifest()
 
     def write_manifest(self, manifest: Any | None = None) -> Path:
@@ -276,7 +304,9 @@ class ArtifactStore:
         relative = _safe_relative(chosen)
         target = (self.run_directory / relative).resolve(strict=False)
         if not target.is_relative_to(self.run_directory.resolve()):
-            raise ArtifactStoreFailure(_error("OUTPUT_NOT_ALLOWED", "artifact path escapes run directory"))
+            raise ArtifactStoreFailure(
+                _error("OUTPUT_NOT_ALLOWED", "artifact path escapes run directory")
+            )
         return relative, target
 
     def publish_file(
@@ -290,15 +320,28 @@ class ArtifactStore:
         self._require_created()
         source = Path(path)
         if not source.is_file():
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact source file was not found"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact source file was not found")
+            )
         try:
             size = source.stat().st_size
         except OSError as exc:
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact source cannot be read")) from exc
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact source cannot be read")
+            ) from exc
         if size <= 0:
-            raise ArtifactStoreFailure(_error("INTERNAL_STAGE_FAILED", "zero-byte artifacts are not publishable"))
-        if size > self.max_output_bytes or self._artifact_bytes + size > self.max_output_bytes:
-            raise ArtifactStoreFailure(_error("OUTPUT_LIMIT_EXCEEDED", "artifact output budget exceeded"))
+            raise ArtifactStoreFailure(
+                _error(
+                    "INTERNAL_STAGE_FAILED", "zero-byte artifacts are not publishable"
+                )
+            )
+        if (
+            size > self.max_output_bytes
+            or self._artifact_bytes + size > self.max_output_bytes
+        ):
+            raise ArtifactStoreFailure(
+                _error("OUTPUT_LIMIT_EXCEEDED", "artifact output budget exceeded")
+            )
         relative, target = self._artifact_target(name, source)
         if target.exists() and target.resolve() != source.resolve():
             stem, suffix = target.stem, target.suffix
@@ -317,21 +360,38 @@ class ArtifactStore:
         except OSError as exc:
             temporary.unlink(missing_ok=True)
             raise ArtifactStoreFailure(
-                _error("INTERNAL_STAGE_FAILED", "artifact publication failed", diagnostics=[str(exc)])
+                _error(
+                    "INTERNAL_STAGE_FAILED",
+                    "artifact publication failed",
+                    diagnostics=[str(exc)],
+                )
             ) from exc
         if actual_size <= 0:
             target.unlink(missing_ok=True)
-            raise ArtifactStoreFailure(_error("INTERNAL_STAGE_FAILED", "zero-byte artifacts are not publishable"))
-        if actual_size > self.max_output_bytes or self._artifact_bytes + actual_size > self.max_output_bytes:
+            raise ArtifactStoreFailure(
+                _error(
+                    "INTERNAL_STAGE_FAILED", "zero-byte artifacts are not publishable"
+                )
+            )
+        if (
+            actual_size > self.max_output_bytes
+            or self._artifact_bytes + actual_size > self.max_output_bytes
+        ):
             target.unlink(missing_ok=True)
-            raise ArtifactStoreFailure(_error("OUTPUT_LIMIT_EXCEEDED", "artifact output budget exceeded"))
-        artifact_id = f"artifact-{len(self._artifact_paths) + 1:04d}-{uuid.uuid4().hex[:8]}"
+            raise ArtifactStoreFailure(
+                _error("OUTPUT_LIMIT_EXCEEDED", "artifact output budget exceeded")
+            )
+        artifact_id = (
+            f"artifact-{len(self._artifact_paths) + 1:04d}-{uuid.uuid4().hex[:8]}"
+        )
         artifact_metadata = dict(metadata or {})
         artifact_metadata["relative_path"] = relative.as_posix()
         ref = ArtifactRef(
             artifact_id=artifact_id,
             uri=f"video-analyzer://runs/{self.run_id}/artifacts/{artifact_id}",
-            media_type=media_type or mimetypes.guess_type(target.name)[0] or "application/octet-stream",
+            media_type=media_type
+            or mimetypes.guess_type(target.name)[0]
+            or "application/octet-stream",
             byte_size=actual_size,
             sha256=digest,
             name=relative.as_posix(),
@@ -339,7 +399,9 @@ class ArtifactStore:
         )
         self._artifact_paths[artifact_id] = target
         self._artifact_bytes += actual_size
-        self._manifest.setdefault("artifacts", {})[artifact_id] = ref.model_dump(mode="json")
+        self._manifest.setdefault("artifacts", {})[artifact_id] = ref.model_dump(
+            mode="json"
+        )
         self.write_manifest()
         return ref
 
@@ -363,62 +425,132 @@ class ArtifactStore:
         metadata: Mapping[str, Any] | None = None,
     ) -> ArtifactRef:
         self._require_created()
-        if len(payload) > self.max_output_bytes or self._artifact_bytes + len(payload) > self.max_output_bytes:
-            raise ArtifactStoreFailure(_error("OUTPUT_LIMIT_EXCEEDED", "artifact output budget exceeded"))
+        if (
+            len(payload) > self.max_output_bytes
+            or self._artifact_bytes + len(payload) > self.max_output_bytes
+        ):
+            raise ArtifactStoreFailure(
+                _error("OUTPUT_LIMIT_EXCEEDED", "artifact output budget exceeded")
+            )
         fd, temporary = tempfile.mkstemp(prefix="payload-", dir=self.staging_directory)
         temporary_path = Path(temporary)
         try:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(payload)
-            return self.publish_file(temporary_path, name=name, media_type=media_type, metadata=metadata)
+            return self.publish_file(
+                temporary_path, name=name, media_type=media_type, metadata=metadata
+            )
         finally:
             temporary_path.unlink(missing_ok=True)
 
-    def write_text(self, payload: str, *, name: str, media_type: str = "text/plain", metadata: Mapping[str, Any] | None = None) -> ArtifactRef:
-        return self.write_bytes(payload.encode("utf-8"), name=name, media_type=media_type, metadata=metadata)
+    def write_text(
+        self,
+        payload: str,
+        *,
+        name: str,
+        media_type: str = "text/plain",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> ArtifactRef:
+        return self.write_bytes(
+            payload.encode("utf-8"), name=name, media_type=media_type, metadata=metadata
+        )
 
-    def write_json(self, value: Any, *, name: str, media_type: str = "application/json", metadata: Mapping[str, Any] | None = None) -> ArtifactRef:
-        return self.write_text(json.dumps(_json_value(value), ensure_ascii=False, sort_keys=True, indent=2) + "\n", name=name, media_type=media_type, metadata=metadata)
+    def write_json(
+        self,
+        value: Any,
+        *,
+        name: str,
+        media_type: str = "application/json",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> ArtifactRef:
+        return self.write_text(
+            json.dumps(_json_value(value), ensure_ascii=False, sort_keys=True, indent=2)
+            + "\n",
+            name=name,
+            media_type=media_type,
+            metadata=metadata,
+        )
 
-    def write_jsonl(self, rows: Any, *, name: str, media_type: str = "application/x-ndjson", metadata: Mapping[str, Any] | None = None) -> ArtifactRef:
-        payload = "".join(json.dumps(_json_value(row), ensure_ascii=False, separators=(",", ":")) + "\n" for row in rows)
-        return self.write_text(payload, name=name, media_type=media_type, metadata=metadata)
+    def write_jsonl(
+        self,
+        rows: Any,
+        *,
+        name: str,
+        media_type: str = "application/x-ndjson",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> ArtifactRef:
+        payload = "".join(
+            json.dumps(_json_value(row), ensure_ascii=False, separators=(",", ":"))
+            + "\n"
+            for row in rows
+        )
+        return self.write_text(
+            payload, name=name, media_type=media_type, metadata=metadata
+        )
 
     def resolve_artifact_path(self, ref: ArtifactRef | Mapping[str, Any] | str) -> Path:
-        artifact_id = ref if isinstance(ref, str) else (ref.get("artifact_id") if isinstance(ref, Mapping) else ref.artifact_id)
+        artifact_id = (
+            ref
+            if isinstance(ref, str)
+            else (
+                ref.get("artifact_id") if isinstance(ref, Mapping) else ref.artifact_id
+            )
+        )
         artifacts = self._manifest.get("artifacts", {})
         entry = artifacts.get(artifact_id) if isinstance(artifacts, Mapping) else None
         if not isinstance(entry, Mapping):
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact id is not in the manifest"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact id is not in the manifest")
+            )
         metadata = entry.get("metadata")
-        relative = metadata.get("relative_path") if isinstance(metadata, Mapping) else None
+        relative = (
+            metadata.get("relative_path") if isinstance(metadata, Mapping) else None
+        )
         if not isinstance(relative, str):
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact path is missing from the manifest"))
+            raise ArtifactStoreFailure(
+                _error(
+                    "ARTIFACT_NOT_FOUND", "artifact path is missing from the manifest"
+                )
+            )
         try:
             relative_path = _safe_relative(relative)
         except ValueError as exc:
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact path is invalid")) from exc
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact path is invalid")
+            ) from exc
         path = (self.run_directory / relative_path).resolve(strict=False)
         if not path.is_relative_to(self.run_directory.resolve()) or not path.is_file():
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact file is not available"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact file is not available")
+            )
         self._artifact_paths[str(artifact_id)] = path
         return path
 
     @staticmethod
-    def _load_resource_manifest(output_root: Path, run_id: str) -> tuple[Path, dict[str, Any]]:
+    def _load_resource_manifest(
+        output_root: Path, run_id: str
+    ) -> tuple[Path, dict[str, Any]]:
         if not _RUN_ID_RE.fullmatch(run_id):
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "run id is invalid"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "run id is invalid")
+            )
         root = output_root.expanduser().resolve(strict=False)
         run_directory = (root / run_id).resolve(strict=False)
         if not run_directory.is_relative_to(root) or not run_directory.is_dir():
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "run is not available"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "run is not available")
+            )
         manifest_path = run_directory / "manifest.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "run manifest is unavailable")) from exc
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "run manifest is unavailable")
+            ) from exc
         if not isinstance(manifest, dict):
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "run manifest is invalid"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "run manifest is invalid")
+            )
         return run_directory, manifest
 
     @classmethod
@@ -433,29 +565,43 @@ class ArtifactStore:
     ) -> str | bytes:
         parsed = urlsplit(uri)
         if parsed.scheme != "video-analyzer" or parsed.netloc != "runs":
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact URI is invalid"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact URI is invalid")
+            )
         parts = parsed.path.strip("/").split("/")
         if len(parts) != 3 or parts[1] != "artifacts":
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact URI is invalid"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact URI is invalid")
+            )
         run_id, artifact_id = parts[0], parts[2]
         run_directory, manifest = cls._load_resource_manifest(Path(output_root), run_id)
         try:
             offset = int(offset)
             limit = int(limit)
         except (TypeError, ValueError) as exc:
-            raise ArtifactStoreFailure(_error("ARTIFACT_RANGE_INVALID", "artifact range must be numeric")) from exc
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_RANGE_INVALID", "artifact range must be numeric")
+            ) from exc
         if offset < 0:
-            raise ArtifactStoreFailure(_error("ARTIFACT_RANGE_INVALID", "offset must be non-negative"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_RANGE_INVALID", "offset must be non-negative")
+            )
         if page is not None:
             try:
                 page = int(page)
             except (TypeError, ValueError) as exc:
-                raise ArtifactStoreFailure(_error("ARTIFACT_RANGE_INVALID", "page must be numeric")) from exc
+                raise ArtifactStoreFailure(
+                    _error("ARTIFACT_RANGE_INVALID", "page must be numeric")
+                ) from exc
             if page < 1:
-                raise ArtifactStoreFailure(_error("ARTIFACT_RANGE_INVALID", "page must be positive"))
+                raise ArtifactStoreFailure(
+                    _error("ARTIFACT_RANGE_INVALID", "page must be positive")
+                )
             offset = (page - 1) * limit
         if offset < 0 or limit <= 0 or limit > _MAX_JSONL_RECORDS:
-            raise ArtifactStoreFailure(_error("ARTIFACT_RANGE_INVALID", "artifact range is outside bounds"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_RANGE_INVALID", "artifact range is outside bounds")
+            )
         artifacts = manifest.get("artifacts")
         if isinstance(artifacts, Mapping):
             entry = artifacts.get(artifact_id)
@@ -464,42 +610,70 @@ class ArtifactStore:
                 (
                     candidate
                     for candidate in artifacts
-                    if isinstance(candidate, Mapping) and candidate.get("artifact_id") == artifact_id
+                    if isinstance(candidate, Mapping)
+                    and candidate.get("artifact_id") == artifact_id
                 ),
                 None,
             )
         else:
             entry = None
         if not isinstance(entry, Mapping):
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact id is not in the manifest"))
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact id is not in the manifest")
+            )
         metadata = entry.get("metadata")
-        relative = metadata.get("relative_path") if isinstance(metadata, Mapping) else None
+        relative = (
+            metadata.get("relative_path") if isinstance(metadata, Mapping) else None
+        )
         if not isinstance(relative, str):
             relative = entry.get("relative_path", entry.get("path"))
         try:
             relative_path = _safe_relative(relative)
         except (TypeError, ValueError) as exc:
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact path is invalid")) from exc
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact path is invalid")
+            ) from exc
         target = (run_directory / relative_path).resolve(strict=False)
         if not target.is_relative_to(run_directory.resolve()) or not target.is_file():
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact file is unavailable"))
-        if target.suffix.lower() in {".jsonl", ".ndjson"} or entry.get("media_type") == "application/x-ndjson":
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact file is unavailable")
+            )
+        if (
+            target.suffix.lower() in {".jsonl", ".ndjson"}
+            or entry.get("media_type") == "application/x-ndjson"
+        ):
             try:
                 records = target.read_text(encoding="utf-8").splitlines()
             except (OSError, UnicodeDecodeError) as exc:
-                raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact cannot be read")) from exc
-            return "\n".join(records[offset : offset + limit]) + ("\n" if records[offset : offset + limit] else "")
-        if offset > _MAX_RESOURCE_BYTES or limit > _MAX_RESOURCE_BYTES or offset + limit > _MAX_RESOURCE_BYTES:
-            raise ArtifactStoreFailure(_error("ARTIFACT_RANGE_INVALID", "artifact byte range is too large"))
+                raise ArtifactStoreFailure(
+                    _error("ARTIFACT_NOT_FOUND", "artifact cannot be read")
+                ) from exc
+            return "\n".join(records[offset : offset + limit]) + (
+                "\n" if records[offset : offset + limit] else ""
+            )
+        if (
+            offset > _MAX_RESOURCE_BYTES
+            or limit > _MAX_RESOURCE_BYTES
+            or offset + limit > _MAX_RESOURCE_BYTES
+        ):
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_RANGE_INVALID", "artifact byte range is too large")
+            )
         try:
             with target.open("rb") as stream:
                 stream.seek(offset)
                 return stream.read(limit)
         except OSError as exc:
-            raise ArtifactStoreFailure(_error("ARTIFACT_NOT_FOUND", "artifact cannot be read")) from exc
+            raise ArtifactStoreFailure(
+                _error("ARTIFACT_NOT_FOUND", "artifact cannot be read")
+            ) from exc
 
-    def read_resource(self, uri: str, *, page: int | None = None, offset: int = 0, limit: int = 200) -> str | bytes:
-        return self.read_uri(self.output_directory, uri, page=page, offset=offset, limit=limit)
+    def read_resource(
+        self, uri: str, *, page: int | None = None, offset: int = 0, limit: int = 200
+    ) -> str | bytes:
+        return self.read_uri(
+            self.output_directory, uri, page=page, offset=offset, limit=limit
+        )
 
 
 def read_artifact_resource(

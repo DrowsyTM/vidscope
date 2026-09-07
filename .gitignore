@@ -9,3 +9,8 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+coverage.xml
+.benchmarks/
+*.part
+*.ytdl
+.env

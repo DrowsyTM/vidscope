@@ -10,7 +10,9 @@ from pydantic import ValidationError
 from video_analyzer.contracts import AnalyzeVideoRequest, TimeRange
 
 
-def make_request(tmp_path: Path, source: str | None = None, **overrides: Any) -> AnalyzeVideoRequest:
+def make_request(
+    tmp_path: Path, source: str | None = None, **overrides: Any
+) -> AnalyzeVideoRequest:
     values: dict[str, Any] = {
         "source": source or "https://example.com/video.mp4",
         "output_directory": tmp_path,
@@ -153,7 +155,9 @@ def test_validates_request_id_pattern_and_length(tmp_path: Path) -> None:
     assert len(valid.request_id) == 64
 
     for request_id in ("", "contains space", "bad/slash", "bad.dot", "x" * 65):
-        assert_rejected(lambda request_id=request_id: make_request(tmp_path, request_id=request_id))
+        assert_rejected(
+            lambda request_id=request_id: make_request(tmp_path, request_id=request_id)
+        )
 
 
 def test_rejects_input_symlink_that_escapes_allowed_root(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,9 @@ runner = CliRunner()
 def _construct(model: type[Any], **values: Any) -> Any:
     """Construct a contract model without coupling adapter tests to defaults."""
     fields = getattr(model, "model_fields", {})
-    selected = {name: value for name, value in values.items() if not fields or name in fields}
+    selected = {
+        name: value for name, value in values.items() if not fields or name in fields
+    }
     return model.model_construct(**selected)
 
 
@@ -141,7 +144,9 @@ def test_cli_success_emits_one_compact_artifact_only_envelope_and_shared_request
     encoded = result.stdout.lower()
     assert "deterministic transcript text" not in encoded
     assert "base64" not in encoded
-    assert all("video-analyzer://" in artifact["uri"] for artifact in payload["artifacts"])
+    assert all(
+        "video-analyzer://" in artifact["uri"] for artifact in payload["artifacts"]
+    )
 
     assert len(seen) == 1
     request, context = seen[0]
@@ -174,7 +179,15 @@ def test_cli_terminal_failure_emits_typed_error_envelope_and_nonzero_exit(
     monkeypatch.setattr("video_analyzer.cli.analyze_video", fake_analyze)
     result = runner.invoke(
         app,
-        ["analyze-video", "--source", str(source), "--out", str(output), "--task", "transcript"],
+        [
+            "analyze-video",
+            "--source",
+            str(source),
+            "--out",
+            str(output),
+            "--task",
+            "transcript",
+        ],
     )
 
     assert result.exit_code != 0
@@ -224,3 +237,33 @@ def test_cli_request_validation_is_typed_and_does_not_call_core(
     assert payload["ok"] is False
     assert payload["code"] == "INVALID_REQUEST"
     assert calls == []
+
+
+def test_cli_mcp_invokes_mcp_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    from video_analyzer.cli import app
+
+    called = False
+
+    def fake_main() -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("video_analyzer.mcp.main", fake_main)
+    result = runner.invoke(app, ["mcp"])
+    assert result.exit_code == 0
+    assert called is True
+
+
+def test_cli_logging_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    from video_analyzer.cli import app
+
+    seen_levels: list[int] = []
+
+    def fake_configure(level: int = logging.INFO) -> None:
+        seen_levels.append(level)
+
+    monkeypatch.setattr("video_analyzer.logging.configure_logging", fake_configure)
+    monkeypatch.setattr("video_analyzer.mcp.main", lambda: None)
+    runner.invoke(app, ["--verbose", "mcp"])
+    runner.invoke(app, ["--quiet", "mcp"])
+    assert seen_levels == [logging.DEBUG, logging.WARNING]
