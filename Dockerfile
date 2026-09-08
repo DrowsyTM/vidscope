@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -21,10 +21,11 @@ RUN groupadd -g 10001 appuser && \
 USER 10001:10001
 WORKDIR /home/appuser/app
 
-COPY --chown=appuser:appuser . /home/appuser/app
+COPY --chown=appuser:appuser requirements-docker.txt /home/appuser/app/requirements-docker.txt
+RUN pip install --no-cache-dir --user --require-hashes -r /home/appuser/app/requirements-docker.txt
 
-RUN pip install --no-cache-dir --user --index-url https://download.pytorch.org/whl/cpu torch && \
-    pip install --no-cache-dir --user .[all]
+COPY --chown=appuser:appuser . /home/appuser/app
+RUN pip install --no-cache-dir --user --no-deps --no-index .
 
 ENTRYPOINT ["vidscope"]
 CMD ["mcp"]

@@ -14,3 +14,4 @@ coverage.xml
 *.part
 *.ytdl
 .env
+temp-*

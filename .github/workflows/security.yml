@@ -18,6 +18,7 @@ jobs:
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
+    if: ${{ !github.event.repository.private }}
     permissions:
       security-events: write
       actions: read
