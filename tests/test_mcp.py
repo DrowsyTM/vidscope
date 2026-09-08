@@ -380,6 +380,9 @@ def test_view_frame_cached_frame(tmp_path: Path) -> None:
     assert isinstance(res, ToolResult)
     assert res.is_error is False
     assert len(res.content) == 2
+    from mcp.types import TextContent
+
+    assert isinstance(res.content[0], TextContent)
     payload = json.loads(res.content[0].text)
     assert payload["timestamp_seconds"] == 45.0
     assert payload["ocr_text"] == "Sample Diagram"

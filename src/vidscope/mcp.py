@@ -19,6 +19,7 @@ from .backends.ocr import TesseractBackend
 from .backends.source import CaptionResolver, SourceBackendFailure, SourceInspector
 from .contracts import (
     AnalysisError,
+    AnalysisTask,
     AnalyzeVideoRequest,
     ErrorCode,
     TimeRange,
@@ -356,7 +357,7 @@ def view_frame(
                         start_seconds=timestamp_seconds,
                         end_seconds=timestamp_seconds + 1.0,
                     ),
-                    tasks={"frames"},
+                    tasks={AnalysisTask.FRAMES},
                     max_frames=1,
                     max_frame_width=max_width,
                     output_directory=output_dir,
@@ -503,7 +504,11 @@ def get_video_timeline(
                     start_seconds=start_seconds,
                     end_seconds=end_seconds,
                 ),
-                tasks={"metadata", "transcript", "frames"},
+                tasks={
+                    AnalysisTask.METADATA,
+                    AnalysisTask.TRANSCRIPT,
+                    AnalysisTask.FRAMES,
+                },
                 max_frames=max_keyframes,
                 max_frame_width=1280,
                 output_directory=output_dir,
@@ -636,7 +641,11 @@ def _process_job_chunks(
                         start_seconds=start_sec,
                         end_seconds=end_sec,
                     ),
-                    tasks={"metadata", "transcript", "frames"},
+                    tasks={
+                        AnalysisTask.METADATA,
+                        AnalysisTask.TRANSCRIPT,
+                        AnalysisTask.FRAMES,
+                    },
                     max_frames=4,
                     max_frame_width=1280,
                     output_directory=output_dir,
