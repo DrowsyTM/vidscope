@@ -147,6 +147,38 @@ Add `vidscope` to `.cursor/mcp.json`:
 
 ---
 
+## FastMCP Tool Suite for AI Agents
+
+`vidscope` exposes an agent-optimized FastMCP interface designed for multimodal LLMs (Claude 3.5 Sonnet, Gemini, GPT-4o). Rather than dumping raw files to disk and requiring local filesystem access, tools return bounded, structured metadata and **native MCP `Image` content blocks (`image/jpeg`)** directly inline.
+
+### Available MCP Tools
+
+| Tool | Purpose | Latency | Typical Use Case |
+|---|---|---|---|
+| `get_video_info` | Fast preflight inspection | ~500ms | Inspect video title, duration, languages, and native YouTube chapters before analysis. |
+| `search_video` | Sub-second caption grep | ~1s | Search for keywords/concepts to pinpoint exact timestamps without video processing. |
+| `get_video_transcript` | Bounded speech transcript | ~1s | Retrieve transcript segments strictly within `[start_seconds, end_seconds]`. |
+| `get_video_timeline` | Fused speech & visual timeline | ~3–8s | Synchronously inspect a window ($\le 180$s) with keyframe metadata, dialogue, and OCR text. |
+| `view_frame` | Native multimodal frame delivery | ~100ms–2s | View a JPEG image frame directly in conversation context using `frame_id` or `(source, timestamp)`. |
+| `start_video_analysis` | Async multi-chunk pipeline | <200ms | Start background analysis for videos >3 minutes; returns a `job_id` immediately. |
+| `get_job_status` | Progressive streaming status | Instant | Check async job progress and retrieve completed video sections while subsequent chunks run. |
+
+### Recommended Agent Workflow
+
+```mermaid
+flowchart TD
+    A["get_video_info(source)"] --> B{"Specific topic or query?"}
+    B -- Yes --> C["search_video(source, query)"]
+    C --> D["get_video_timeline(source, start, end)"]
+    B -- No --> D
+    D --> E{"Need visual inspection?"}
+    E -- Yes --> F["view_frame(frame_id)"]
+    F --> G["Answer User Query"]
+    E -- No --> G
+```
+
+---
+
 ## CLI Usage
 
 ### Analyze Video Window
