@@ -650,3 +650,94 @@ def test_analyze_video_idempotency_returns_existing_job(
     job_id_2 = res2["job_id"]
 
     assert job_id_1 == job_id_2
+
+
+def test_view_frame_mutual_exclusivity_and_validation() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.mcp import view_frame
+
+    # Both frame_id and source/timestamp
+    res1 = view_frame(frame_id="frame_123", source="test.mp4", timestamp_seconds=10.0)
+    assert isinstance(res1, ToolResult)
+    assert res1.is_error is True
+    assert res1.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert "Cannot provide both" in res1.structured_content["message"]
+
+    # Only source without timestamp
+    res2 = view_frame(source="test.mp4")
+    assert isinstance(res2, ToolResult)
+    assert res2.is_error is True
+    assert res2.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert "Both 'source' and 'timestamp_seconds'" in res2.structured_content["message"]
+
+    # Only timestamp without source
+    res3 = view_frame(timestamp_seconds=15.0)
+    assert isinstance(res3, ToolResult)
+    assert res3.is_error is True
+    assert res3.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert "Both 'source' and 'timestamp_seconds'" in res3.structured_content["message"]
+
+    # Empty invocation
+    res4 = view_frame()
+    assert isinstance(res4, ToolResult)
+    assert res4.is_error is True
+    assert res4.structured_content["code"] == ErrorCode.INVALID_REQUEST
+
+
+def test_search_video_mutual_exclusivity_and_validation() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.mcp import search_video
+
+    # Both source and job_id
+    res1 = search_video(query="hello", source="test.mp4", job_id="job_123")
+    assert isinstance(res1, ToolResult)
+    assert res1.is_error is True
+    assert res1.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert "Cannot provide both" in res1.structured_content["message"]
+
+    # Neither source nor job_id
+    res2 = search_video(query="hello")
+    assert isinstance(res2, ToolResult)
+    assert res2.is_error is True
+    assert res2.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert "Must provide either" in res2.structured_content["message"]
+
+
+def test_server_info_static_resource() -> None:
+    from vidscope.mcp import _server_info_resource, mcp
+
+    payload = json.loads(_server_info_resource())
+    assert payload["name"] == "vidscope"
+    assert "3.4.7" in payload["version"]
+    assert "analyze_video" in payload["tools"]
+    assert len(payload["resource_templates"]) >= 3
+
+    # FastMCP list_resources returns server_info
+    list_resources = getattr(mcp, "list_resources", None)
+    if callable(list_resources):
+        resources = _await(list_resources())
+        if isinstance(resources, Mapping):
+            resources = list(resources.values())
+        resource_uris = [str(_field(r, "uri")) for r in resources]
+        assert "vidscope://info" in resource_uris
+
+
+def test_analyze_video_schema_constraints() -> None:
+    from vidscope.mcp import mcp
+
+    list_tools = getattr(mcp, "list_tools", None)
+    if callable(list_tools):
+        tools = _await(list_tools())
+        if isinstance(tools, Mapping):
+            tools = list(tools.values())
+        tool_map = {_field(t, "name"): t for t in tools}
+        analyze_tool = tool_map["analyze_video"]
+        params = getattr(analyze_tool, "parameters", {})
+        props = params.get("properties", {}) if isinstance(params, dict) else {}
+        chunk_prop = props.get("chunk_duration_seconds", {})
+        assert chunk_prop.get("maximum") == 180.0
+        assert chunk_prop.get("exclusiveMinimum") == 0.0

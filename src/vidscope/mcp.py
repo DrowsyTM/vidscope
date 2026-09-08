@@ -8,16 +8,21 @@ import tempfile
 import threading
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from fastmcp.tools.base import ToolResult
 from fastmcp.utilities.types import Image
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from .artifacts import ArtifactStore, ArtifactStoreFailure, read_artifact_resource
 from .backends.ocr import TesseractBackend
-from .backends.source import CaptionResolver, SourceBackendFailure, SourceInspector
+from .backends.source import (
+    CaptionResolver,
+    SourceBackendFailure,
+    SourceInspector,
+    _choose_track,
+)
 from .contracts import (
     AnalysisError,
     AnalysisTask,
@@ -341,11 +346,33 @@ def _process_job_chunks(
     annotations={"readOnlyHint": False, "idempotentHint": False},
 )
 def analyze_video(
-    source: str,
-    start_seconds: float = 0.0,
-    end_seconds: float | None = None,
-    chunk_duration_seconds: float = 180.0,
-    sync_timeout_seconds: float = 5.0,
+    source: Annotated[
+        str,
+        Field(description="URL or local path of the video to analyze"),
+    ],
+    start_seconds: Annotated[
+        float,
+        Field(ge=0.0, description="Start offset in seconds (must be >= 0)"),
+    ] = 0.0,
+    end_seconds: Annotated[
+        float | None,
+        Field(description="Optional end offset in seconds"),
+    ] = None,
+    chunk_duration_seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            le=180.0,
+            description="Duration of each analysis window in seconds (0 < duration <= 180.0)",
+        ),
+    ] = 180.0,
+    sync_timeout_seconds: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            description="Maximum seconds to wait synchronously before transitioning to background job",
+        ),
+    ] = 5.0,
 ) -> dict[str, Any] | ToolResult:
     """Analyze a video and extract a token-efficient visual & speech timeline.
 
@@ -511,16 +538,70 @@ def get_job_status(job_id: str, since_chunk: int = 0) -> dict[str, Any] | ToolRe
     annotations={"readOnlyHint": True, "idempotentHint": True},
 )
 def view_frame(
-    frame_id: str | None = None,
-    source: str | None = None,
-    timestamp_seconds: float | None = None,
-    max_width: int = 1280,
+    frame_id: Annotated[
+        str | None,
+        Field(
+            description="Keyframe identifier from analyze_video timeline (mutually exclusive with source/timestamp)",
+        ),
+    ] = None,
+    source: Annotated[
+        str | None,
+        Field(
+            description="Video URL or path to extract a frame on demand (requires timestamp_seconds, mutually exclusive with frame_id)",
+        ),
+    ] = None,
+    timestamp_seconds: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            description="Timestamp in seconds to extract frame on demand (requires source, mutually exclusive with frame_id)",
+        ),
+    ] = None,
+    max_width: Annotated[
+        int,
+        Field(
+            gt=0,
+            description="Maximum frame image width in pixels",
+        ),
+    ] = 1280,
 ) -> ToolResult:
     """View a video frame as a native MCP Image content block with OCR metadata.
 
     Can retrieve an extracted keyframe via frame_id, or extract a frame on demand
     given source and timestamp_seconds.
     """
+    if frame_id is not None and (source is not None or timestamp_seconds is not None):
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="view_frame",
+            message="Cannot provide both 'frame_id' and 'source'/'timestamp_seconds'. Provide either 'frame_id' to retrieve an existing keyframe, or ('source' and 'timestamp_seconds') to extract a frame at a specific timestamp.",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    if (source is not None and timestamp_seconds is None) or (
+        source is None and timestamp_seconds is not None
+    ):
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="view_frame",
+            message="Both 'source' and 'timestamp_seconds' must be provided when extracting a frame by timestamp.",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    if frame_id is None and source is None and timestamp_seconds is None:
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="view_frame",
+            message="Must provide either 'frame_id' or ('source' and 'timestamp_seconds')",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
     if frame_id is not None:
         frame_data = global_job_manager.get_frame(frame_id)
         if frame_data is None:
@@ -688,19 +769,66 @@ def view_frame(
     annotations={"readOnlyHint": True, "idempotentHint": True},
 )
 def search_video(
-    query: str,
-    source: str | None = None,
-    job_id: str | None = None,
-    language: str | None = None,
-    is_regex: bool = False,
-    case_sensitive: bool = False,
-    max_matches: int = 20,
+    query: Annotated[
+        str,
+        Field(description="Text or regex pattern to search for in captions/transcript"),
+    ],
+    source: Annotated[
+        str | None,
+        Field(
+            description="Video URL or path to search native captions (mutually exclusive with job_id)",
+        ),
+    ] = None,
+    job_id: Annotated[
+        str | None,
+        Field(
+            description="Analysis job ID to search generated transcript (mutually exclusive with source)",
+        ),
+    ] = None,
+    language: Annotated[
+        str | None,
+        Field(
+            description="Optional subtitle language code (e.g. 'en', 'es') for native captions",
+        ),
+    ] = None,
+    is_regex: Annotated[
+        bool,
+        Field(description="Whether to treat query as a regular expression"),
+    ] = False,
+    case_sensitive: Annotated[
+        bool,
+        Field(description="Whether search should match case sensitivity"),
+    ] = False,
+    max_matches: Annotated[
+        int,
+        Field(gt=0, description="Maximum number of matches to return"),
+    ] = 20,
 ) -> dict[str, Any] | ToolResult:
     """Grep across video subtitles or analyzed transcript with optional regex matching.
 
     Can search native captions upfront using source, or search the ASR transcript of an
     analyzed video using job_id.
     """
+    if source is not None and job_id is not None:
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="search_video",
+            message="Cannot provide both 'source' and 'job_id'. Provide 'source' to search native captions, or 'job_id' to search analyzed transcript.",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    if source is None and job_id is None:
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="search_video",
+            message="Must provide either source (for native captions) or job_id (for analyzed transcript)",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
     cleaned_query = query.strip()
     if not cleaned_query:
         error = AnalysisError(
@@ -758,7 +886,7 @@ def search_video(
             }
         segments_to_search = job.full_transcript
 
-    elif source is not None:
+    else:
         try:
             inspector = SourceInspector()
             inspection = inspector.inspect({"source": source})
@@ -773,17 +901,27 @@ def search_video(
                     if avail
                     else ""
                 )
+                matching_track = _choose_track(inspection.caption_tracks, target_lang)
+                if matching_track is not None:
+                    msg = (
+                        f"Native caption track for '{target_lang}' is listed in video metadata, "
+                        "but could not be downloaded from the remote provider (remote provider may be rate-limiting or timed out). "
+                        "Call analyze_video(source) to perform visual and speech analysis, "
+                        "then search with job_id."
+                    )
+                else:
+                    msg = (
+                        f"No native captions available for source in language '{target_lang}'{avail_summary}. "
+                        "Call analyze_video(source) to transcribe or visually analyze the video, "
+                        "then search with job_id."
+                    )
                 return {
                     "source": source,
                     "query": query,
                     "language": target_lang,
                     "matches_count": 0,
                     "matches": [],
-                    "message": (
-                        f"No native captions available for source in language '{target_lang}'{avail_summary}. "
-                        "Call analyze_video(source) to transcribe or visually analyze the video, "
-                        "then search with job_id."
-                    ),
+                    "message": msg,
                 }
             segments_to_search = track.segments
         except (VideoAnalyzerFailure, SourceBackendFailure) as exc:
@@ -802,16 +940,6 @@ def search_video(
             return ToolResult(
                 content=payload, structured_content=payload, is_error=True
             )
-
-    else:
-        error = AnalysisError(
-            code=ErrorCode.INVALID_REQUEST,
-            stage="search_video",
-            message="Must provide either source (for native captions) or job_id (for analyzed transcript)",
-            retryable=False,
-        )
-        payload = _error_payload(error)
-        return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     matches: list[dict[str, Any]] = []
     for seg in segments_to_search:
@@ -892,9 +1020,34 @@ def _read_plan_resource(run_id: str) -> str:
         return json.dumps({"error": str(exc)})
 
 
+@mcp.resource("vidscope://info", name="server_info")
+def _server_info_resource() -> str:
+    """Server capabilities, active version, and available resource URI templates."""
+    return json.dumps(
+        {
+            "name": "vidscope",
+            "version": "3.4.7",
+            "description": "Video understanding and visual intelligence MCP server",
+            "tools": [
+                "get_video_info",
+                "analyze_video",
+                "get_job_status",
+                "view_frame",
+                "search_video",
+            ],
+            "resource_templates": [
+                "vidscope://runs/{run_id}/artifacts/{artifact_id}{?page,offset,limit}",
+                "vidscope://runs/{run_id}/manifest",
+                "vidscope://runs/{run_id}/plan",
+            ],
+        },
+        indent=2,
+    )
+
+
 def main() -> None:
     configure_logging()
-    mcp.run()
+    mcp.run(show_banner=False)
 
 
 __all__ = [
