@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.tools.base import ToolResult
 from pydantic import ValidationError
 
-from .artifacts import ArtifactStoreFailure, read_artifact_resource
+from .artifacts import ArtifactStore, ArtifactStoreFailure, read_artifact_resource
 from .contracts import AnalysisError, AnalysisResult, AnalyzeVideoRequest, ErrorCode
 from .core import AnalysisContext, VideoAnalyzerFailure
 from .core import analyze_video as core_analyze_video
 from .logging import configure_logging
+from .settings import get_settings
 
 mcp = FastMCP("vidscope")
 
@@ -69,7 +72,6 @@ def analyze_video(
 @mcp.resource(
     "vidscope://runs/{run_id}/artifacts/{artifact_id}{?page,offset,limit}",
     name="read_artifact",
-    mime_type="application/jsonl",
 )
 def _read_artifact_resource(
     run_id: str,
@@ -77,9 +79,41 @@ def _read_artifact_resource(
     page: int | None = None,
     offset: int = 0,
     limit: int = 200,
-) -> str | bytes | ArtifactStoreFailure:
+) -> str | bytes:
     uri = f"vidscope://runs/{run_id}/artifacts/{artifact_id}"
-    return read_artifact_resource(uri, page=page, offset=offset, limit=limit)
+    result = read_artifact_resource(uri, page=page, offset=offset, limit=limit)
+    if isinstance(result, ArtifactStoreFailure):
+        return json.dumps(result.error.model_dump(mode="json"))
+    return result
+
+
+@mcp.resource("vidscope://runs/{run_id}/manifest", name="read_manifest")
+def _read_manifest_resource(run_id: str) -> str:
+    settings = get_settings()
+    root = settings.allowed_output_root or Path.cwd()
+    try:
+        _, manifest = ArtifactStore._load_resource_manifest(root, run_id)
+        return json.dumps(manifest, indent=2)
+    except ArtifactStoreFailure as exc:
+        return json.dumps(exc.error.model_dump(mode="json"))
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.resource("vidscope://runs/{run_id}/plan", name="read_plan")
+def _read_plan_resource(run_id: str) -> str:
+    settings = get_settings()
+    root = settings.allowed_output_root or Path.cwd()
+    try:
+        run_dir, _ = ArtifactStore._load_resource_manifest(root, run_id)
+        plan_path = run_dir / "plan.json"
+        if not plan_path.is_file():
+            return json.dumps({"error": "plan not found"})
+        return plan_path.read_text(encoding="utf-8")
+    except ArtifactStoreFailure as exc:
+        return json.dumps(exc.error.model_dump(mode="json"))
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
 
 
 def main() -> None:

@@ -295,7 +295,7 @@ def _vtt(rows: list[dict[str, Any]]) -> str:
         hours = int(total // 3600)
         minutes = int((total % 3600) // 60)
         remainder = total % 60
-        return f"{hours:02d}:{minutes:02d}:{remainder:06.3f}".replace(".", ",")
+        return f"{hours:02d}:{minutes:02d}:{remainder:06.3f}"
 
     lines = ["WEBVTT", ""]
     for row in rows:
@@ -557,6 +557,16 @@ def _run_analysis(
                 rows = _segments(caption)
                 if not rows:
                     raise RuntimeError("caption transcript output was empty")
+                start = float(request.time_range.start_seconds)
+                end = float(request.time_range.end_seconds)
+                bounded_rows = [
+                    row
+                    for row in rows
+                    if float(row.get("end_seconds", row.get("end", 0.0))) > start
+                    and float(row.get("start_seconds", row.get("start", 0.0))) < end
+                ]
+                if bounded_rows:
+                    rows = bounded_rows
                 refs.append(
                     store.write_jsonl(
                         rows,
