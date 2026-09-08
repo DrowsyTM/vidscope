@@ -8,16 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Agentic FastMCP tool suite for zero-filesystem, multimodal agent interaction:
+- Unified Agentic FastMCP tool suite (5 tools) for zero-filesystem, multimodal agent interaction:
   - `get_video_info`: Fast preflight metadata, subtitles, and native chapters discovery.
-  - `search_video`: Sub-second keyword grep across video captions returning exact timestamps and formatted time codes.
-  - `get_video_transcript`: Strictly window-bounded speech transcript extraction without full-track download overhead.
+  - `analyze_video`: Unified video analysis entry point with sync-then-async fallback (<5s sync window for fast timeline return; background handoff with ETA and `job_id` for longer runs).
+  - `get_job_status`: Incremental streaming job status with cursor pagination (`since_chunk`) to prevent context window token bloat.
   - `view_frame`: Native MCP `Image` content block delivery (`image/jpeg`) with inline OCR and timestamp metadata.
-  - `get_video_timeline`: Synchronous bounded timeline fusing dialogue, keyframes, and OCR text.
-  - `start_video_analysis` and `get_job_status`: 2-step asynchronous multi-chunk job execution with progressive section streaming.
-- Thread-safe in-memory `JobManager` with automatic 2-hour TTL cleanup for background video processing and keyframe image caching.
+  - `search_video`: Video grep engine supporting regex and case-sensitive matching across native captions (`source`) or analyzed speech transcripts (`job_id`).
+- Thread-safe in-memory `JobManager` with completion signaling (`completed_event`), incremental cursor pagination, transcript accumulation, and automatic 2-hour TTL cleanup.
 
 ### Changed
+- Consolidated video analysis into a single entry point (`analyze_video`), removing duplicate paths (`get_video_timeline`, `get_video_transcript`, `start_video_analysis`).
 - Refactored FastMCP server to deliver direct multimodal data blocks instead of requiring local filesystem artifact traversal.
 
 ### Fixed
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforced `AnalysisTask` enum type safety and `TextContent` union narrowing for mypy compliance.
 
 ### Removed
-- Removed legacy `analyze_video` MCP tool in favor of the modular agentic tool suite.
+- Removed legacy file-dumping `analyze_video` tool and redundant intermediate MCP tools (`get_video_timeline`, `get_video_transcript`, `start_video_analysis`).
 
 ## [0.1.0] - 2026-09-07
 

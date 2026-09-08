@@ -35,7 +35,7 @@ def format_timestamp(seconds: float | None) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-@dataclass(slots=True)
+@dataclass
 class JobState:
     """Thread-safe state for an ongoing or completed video analysis job."""
 
@@ -48,12 +48,23 @@ class JobState:
     completed_chunks: int
     total_chunks: int
     chunks: list[dict[str, float]]
+    estimated_total_seconds: float = 0.0
     available_sections: list[dict[str, Any]] = field(default_factory=list)
+    full_transcript: list[dict[str, Any]] = field(default_factory=list)
     frames: dict[str, dict[str, Any]] = field(default_factory=dict)
     error: str | None = None
     work_dir: Path | None = None
+    completed_event: threading.Event = field(default_factory=threading.Event)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, since_chunk: int = 0) -> dict[str, Any]:
+        now = time.time()
+        elapsed = now - self.created_at
+        remaining = (
+            max(0.0, self.estimated_total_seconds - elapsed)
+            if self.status == "processing"
+            else 0.0
+        )
+        returned_sections = self.available_sections[since_chunk:]
         return {
             "job_id": self.job_id,
             "source": self.source,
@@ -61,7 +72,10 @@ class JobState:
             "progress_percentage": round(self.progress_percentage, 1),
             "completed_chunks": self.completed_chunks,
             "total_chunks": self.total_chunks,
-            "available_sections": list(self.available_sections),
+            "estimated_remaining_seconds": round(remaining, 1),
+            "timeline": list(returned_sections),
+            "timeline_chunks_returned": len(returned_sections),
+            "total_timeline_chunks": len(self.available_sections),
             "error": self.error,
         }
 
@@ -80,6 +94,7 @@ class JobManager:
         self,
         source: str,
         chunk_ranges: list[tuple[float, float]],
+        estimated_seconds_per_chunk: float = 6.0,
     ) -> JobState:
         with self._lock:
             self._cleanup_locked()
@@ -91,6 +106,7 @@ class JobManager:
                 {"start_seconds": round(s, 2), "end_seconds": round(e, 2)}
                 for s, e in chunk_ranges
             ]
+            estimated_total = max(1.0, len(chunk_ranges) * estimated_seconds_per_chunk)
             job = JobState(
                 job_id=job_id,
                 source=source,
@@ -101,10 +117,13 @@ class JobManager:
                 completed_chunks=0,
                 total_chunks=len(chunk_ranges),
                 chunks=chunks,
+                estimated_total_seconds=estimated_total,
                 available_sections=[],
+                full_transcript=[],
                 frames={},
                 error=None,
                 work_dir=work_dir,
+                completed_event=threading.Event(),
             )
             self._jobs[job_id] = job
             return job
@@ -119,12 +138,15 @@ class JobManager:
         job_id: str,
         section: dict[str, Any],
         completed_chunks: int,
+        transcript_segments: list[dict[str, Any]] | None = None,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
                 return
             job.available_sections.append(section)
+            if transcript_segments:
+                job.full_transcript.extend(transcript_segments)
             job.completed_chunks = completed_chunks
             job.progress_percentage = (
                 (completed_chunks / job.total_chunks) * 100.0
@@ -141,6 +163,7 @@ class JobManager:
             job.status = "completed"
             job.progress_percentage = 100.0
             job.updated_at = time.time()
+            job.completed_event.set()
 
     def fail_job(self, job_id: str, error_message: str) -> None:
         with self._lock:
@@ -150,6 +173,7 @@ class JobManager:
             job.status = "failed"
             job.error = error_message
             job.updated_at = time.time()
+            job.completed_event.set()
 
     def register_frame(
         self,

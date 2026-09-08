@@ -153,28 +153,33 @@ Add `vidscope` to `.cursor/mcp.json`:
 
 ### Available MCP Tools
 
-| Tool | Purpose | Latency | Typical Use Case |
+| Tool | Purpose | Mode | Typical Use Case |
 |---|---|---|---|
-| `get_video_info` | Fast preflight inspection | ~500ms | Inspect video title, duration, languages, and native YouTube chapters before analysis. |
-| `search_video` | Sub-second caption grep | ~1s | Search for keywords/concepts to pinpoint exact timestamps without video processing. |
-| `get_video_transcript` | Bounded speech transcript | ~1s | Retrieve transcript segments strictly within `[start_seconds, end_seconds]`. |
-| `get_video_timeline` | Fused speech & visual timeline | ~3–8s | Synchronously inspect a window ($\le 180$s) with keyframe metadata, dialogue, and OCR text. |
-| `view_frame` | Native multimodal frame delivery | ~100ms–2s | View a JPEG image frame directly in conversation context using `frame_id` or `(source, timestamp)`. |
-| `start_video_analysis` | Async multi-chunk pipeline | <200ms | Start background analysis for videos >3 minutes; returns a `job_id` immediately. |
-| `get_job_status` | Progressive streaming status | Instant | Check async job progress and retrieve completed video sections while subsequent chunks run. |
+| `get_video_info` | Fast preflight inspection | Sync (~500ms) | Inspect video title, duration, languages, chapters, and native caption availability. |
+| `analyze_video` | Single video analysis front door | Sync (<5s) / Async | Analyze video and extract condensed visual & speech timeline chunks. Short clips return complete timeline immediately; longer videos seamlessly hand off to background with `job_id` and ETA. |
+| `get_job_status` | Incremental streaming status | Instant | Check background job status and retrieve newly completed timeline chunks using `since_chunk` cursor to prevent token bloat. |
+| `view_frame` | Multimodal frame delivery | Sync (~100ms–2s) | View any video frame directly in conversation context as a native MCP `Image` (`image/jpeg`) block with OCR metadata, via `frame_id` or `(source, timestamp)`. |
+| `search_video` | Fast caption & transcript grep | Sync (~1s) | Grep across native subtitles (`source`) or analyzed transcripts (`job_id`) with regex and case-sensitivity support. |
 
 ### Recommended Agent Workflow
 
 ```mermaid
 flowchart TD
-    A["get_video_info(source)"] --> B{"Specific topic or query?"}
-    B -- Yes --> C["search_video(source, query)"]
-    C --> D["get_video_timeline(source, start, end)"]
-    B -- No --> D
-    D --> E{"Need visual inspection?"}
-    E -- Yes --> F["view_frame(frame_id)"]
-    F --> G["Answer User Query"]
-    E -- No --> G
+    A["get_video_info(source)"] --> B{"Native captions present & specific query?"}
+    B -- Yes --> C["search_video(query, source=...)"]
+    B -- No / Need Full Analysis --> D["analyze_video(source)"]
+    C --> D
+    D --> E{"Finished in <=5s?"}
+    E -- Yes --> F["Timeline returned directly"]
+    E -- No --> G["get_job_status(job_id, since_chunk=...)"]
+    G --> F
+    F --> H{"Inspect specific keyframe visually?"}
+    H -- Yes --> I["view_frame(frame_id)"]
+    H -- No --> J["Answer User Query"]
+    I --> J
+    F --> K{"Grep speech transcript?"}
+    K -- Yes --> L["search_video(query, job_id=...)"]
+    L --> J
 ```
 
 ---

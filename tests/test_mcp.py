@@ -90,24 +90,23 @@ def test_mcp_registers_expected_tools_with_annotations() -> None:
     if tools is None:
         pytest.skip("FastMCP version does not expose tool introspection")
     tool_map = {_field(t, "name"): t for t in tools}
-    assert len(tool_map) == 7
-    assert "analyze_video" not in tool_map
+    assert len(tool_map) == 5
+    assert "analyze_video" in tool_map
     assert "get_video_info" in tool_map
     assert "search_video" in tool_map
-    assert "get_video_transcript" in tool_map
     assert "view_frame" in tool_map
-    assert "get_video_timeline" in tool_map
-    assert "start_video_analysis" in tool_map
     assert "get_job_status" in tool_map
 
     assert _tool_annotation(tool_map["get_video_info"], "readOnlyHint") is True
     assert _tool_annotation(tool_map["get_video_info"], "idempotentHint") is True
-    assert _tool_annotation(tool_map["search_video"], "readOnlyHint") is True
-    assert _tool_annotation(tool_map["get_video_transcript"], "readOnlyHint") is True
-    assert _tool_annotation(tool_map["view_frame"], "readOnlyHint") is True
-    assert _tool_annotation(tool_map["get_video_timeline"], "readOnlyHint") is True
-    assert _tool_annotation(tool_map["start_video_analysis"], "readOnlyHint") is False
+    assert _tool_annotation(tool_map["analyze_video"], "readOnlyHint") is False
+    assert _tool_annotation(tool_map["analyze_video"], "idempotentHint") is False
     assert _tool_annotation(tool_map["get_job_status"], "readOnlyHint") is True
+    assert _tool_annotation(tool_map["get_job_status"], "idempotentHint") is True
+    assert _tool_annotation(tool_map["view_frame"], "readOnlyHint") is True
+    assert _tool_annotation(tool_map["view_frame"], "idempotentHint") is True
+    assert _tool_annotation(tool_map["search_video"], "readOnlyHint") is True
+    assert _tool_annotation(tool_map["search_video"], "idempotentHint") is True
 
 
 def _resource_error_code(value: Any) -> str | None:
@@ -282,9 +281,21 @@ def test_search_video_finds_matching_snippets(monkeypatch: pytest.MonkeyPatch) -
         provider="test",
         source_url=None,
         segments=[
-            {"start": 10.0, "end": 15.0, "text": "Welcome to neural networks"},
-            {"start": 65.0, "end": 70.0, "text": "This is backpropagation in action"},
-            {"start": 90.0, "end": 95.0, "text": "Gradient descent optimization"},
+            {
+                "start_seconds": 10.0,
+                "end_seconds": 15.0,
+                "text": "Welcome to neural networks",
+            },
+            {
+                "start_seconds": 65.0,
+                "end_seconds": 70.0,
+                "text": "This is backpropagation in action",
+            },
+            {
+                "start_seconds": 90.0,
+                "end_seconds": 95.0,
+                "text": "Gradient descent optimization",
+            },
         ],
     )
     monkeypatch.setattr(
@@ -298,7 +309,7 @@ def test_search_video_finds_matching_snippets(monkeypatch: pytest.MonkeyPatch) -
         lambda self, insp, req: track,
     )
 
-    res = search_video("test.mp4", query="backpropagation")
+    res = search_video(query="backpropagation", source="test.mp4")
     assert isinstance(res, dict)
     assert res["matches_count"] == 1
     assert res["matches"][0]["start_seconds"] == 65.0
@@ -306,21 +317,11 @@ def test_search_video_finds_matching_snippets(monkeypatch: pytest.MonkeyPatch) -
     assert "backpropagation" in res["matches"][0]["snippet"]
 
 
-def test_search_video_empty_query_returns_error() -> None:
-    from fastmcp.tools.base import ToolResult
-
-    from vidscope.mcp import search_video
-
-    res = search_video("test.mp4", query="   ")
-    assert isinstance(res, ToolResult)
-    assert res.is_error is True
-
-
-def test_get_video_transcript_bounds_correctly(
+def test_search_video_regex_and_case_sensitivity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from vidscope.backends.source import CaptionTrack, SourceInspection
-    from vidscope.mcp import get_video_transcript
+    from vidscope.mcp import search_video
 
     track = CaptionTrack(
         kind="manual",
@@ -328,15 +329,22 @@ def test_get_video_transcript_bounds_correctly(
         provider="test",
         source_url=None,
         segments=[
-            {"start": 0.0, "end": 10.0, "text": "First part"},
-            {"start": 20.0, "end": 30.0, "text": "Second part"},
-            {"start": 100.0, "end": 110.0, "text": "Far part"},
+            {
+                "start_seconds": 10.0,
+                "end_seconds": 15.0,
+                "text": "Error 404: Not Found",
+            },
+            {
+                "start_seconds": 65.0,
+                "end_seconds": 70.0,
+                "text": "error 500: server failure",
+            },
         ],
     )
     monkeypatch.setattr(
         "vidscope.backends.source.SourceInspector.inspect",
         lambda self, req: SourceInspection(
-            source="test", is_url=False, duration_seconds=200.0
+            source="test", is_url=False, duration_seconds=100.0
         ),
     )
     monkeypatch.setattr(
@@ -344,21 +352,61 @@ def test_get_video_transcript_bounds_correctly(
         lambda self, insp, req: track,
     )
 
-    res = get_video_transcript("test.mp4", start_seconds=15.0, end_seconds=50.0)
+    # Regex test
+    res = search_video(query=r"Error \d+", source="test.mp4", is_regex=True)
     assert isinstance(res, dict)
-    assert res["segment_count"] == 1
-    assert res["segments"][0]["text"] == "Second part"
-    assert res["full_text"] == "Second part"
+    assert res["matches_count"] == 2
+
+    # Case-sensitive test
+    res_case = search_video(query="Error", source="test.mp4", case_sensitive=True)
+    assert isinstance(res_case, dict)
+    assert res_case["matches_count"] == 1
+    assert res_case["matches"][0]["start_seconds"] == 10.0
 
 
-def test_get_video_transcript_invalid_range() -> None:
+def test_search_video_empty_query_returns_error() -> None:
     from fastmcp.tools.base import ToolResult
 
-    from vidscope.mcp import get_video_transcript
+    from vidscope.mcp import search_video
 
-    res = get_video_transcript("test.mp4", start_seconds=50.0, end_seconds=20.0)
+    res = search_video(query="   ", source="test.mp4")
     assert isinstance(res, ToolResult)
     assert res.is_error is True
+
+
+def test_search_video_invalid_regex_returns_error() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.mcp import search_video
+
+    res = search_video(query="[unclosed-regex", source="test.mp4", is_regex=True)
+    assert isinstance(res, ToolResult)
+    assert res.is_error is True
+
+
+def test_search_video_job_id_transcript() -> None:
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import search_video
+
+    job = global_job_manager.create_job("test_src", [(0.0, 100.0)])
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "summary": "Intro"},
+        completed_chunks=1,
+        transcript_segments=[
+            {
+                "start_seconds": 12.5,
+                "end_seconds": 18.0,
+                "text": "Transformer architecture",
+            },
+            {"start_seconds": 25.0, "end_seconds": 30.0, "text": "Attention mechanism"},
+        ],
+    )
+    res = search_video(query="Attention", job_id=job.job_id)
+    assert isinstance(res, dict)
+    assert res["matches_count"] == 1
+    assert res["matches"][0]["start_seconds"] == 25.0
+    assert "Attention mechanism" in res["matches"][0]["snippet"]
 
 
 def test_view_frame_cached_frame(tmp_path: Path) -> None:
@@ -399,51 +447,116 @@ def test_view_frame_missing_frame() -> None:
     assert res.is_error is True
 
 
-def test_get_video_timeline_rejects_exceeded_window() -> None:
-    from fastmcp.tools.base import ToolResult
-
-    from vidscope.mcp import get_video_timeline
-
-    res = get_video_timeline("test.mp4", start_seconds=0.0, end_seconds=200.0)
-    assert isinstance(res, ToolResult)
-    assert res.is_error is True
-
-
-def test_start_video_analysis_and_get_job_status(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_analyze_video_sync_success(monkeypatch: pytest.MonkeyPatch) -> None:
     from vidscope.backends.source import SourceInspection
     from vidscope.jobs import global_job_manager
-    from vidscope.mcp import get_job_status, start_video_analysis
+    from vidscope.mcp import analyze_video
 
     monkeypatch.setattr(
         "vidscope.backends.source.SourceInspector.inspect",
         lambda self, req: SourceInspection(
-            source="test", is_url=False, duration_seconds=300.0
+            source="test", is_url=False, duration_seconds=60.0
         ),
     )
+
+    def mock_process(job_id: str, src: str, chunks: list[tuple[float, float]]) -> None:
+        global_job_manager.update_job_progress(
+            job_id,
+            section={
+                "chunk_index": 1,
+                "start_seconds": 0.0,
+                "end_seconds": 60.0,
+                "summary": "Full overview",
+            },
+            completed_chunks=1,
+        )
+        global_job_manager.complete_job(job_id)
+
+    monkeypatch.setattr("vidscope.mcp._process_job_chunks", mock_process)
+
+    res = analyze_video("test.mp4", sync_timeout_seconds=2.0)
+    assert isinstance(res, dict)
+    assert res["status"] == "completed"
+    assert len(res["timeline"]) == 1
+    assert res["timeline"][0]["summary"] == "Full overview"
+    assert "hint" in res
+
+
+def test_analyze_video_async_fallback_and_get_job_status_streaming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from vidscope.backends.source import SourceInspection
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import analyze_video, get_job_status
+
     monkeypatch.setattr(
-        "vidscope.mcp._process_job_chunks", lambda job_id, src, chunks: None
+        "vidscope.backends.source.SourceInspector.inspect",
+        lambda self, req: SourceInspection(
+            source="test", is_url=False, duration_seconds=360.0
+        ),
     )
 
-    res = start_video_analysis(
-        "test.mp4",
-        start_seconds=0.0,
-        end_seconds=300.0,
-        chunk_duration_seconds=150.0,
+    def slow_process(job_id: str, src: str, chunks: list[tuple[float, float]]) -> None:
+        time.sleep(0.3)
+        global_job_manager.update_job_progress(
+            job_id,
+            section={"chunk_index": 1, "summary": "Section 1"},
+            completed_chunks=1,
+        )
+        time.sleep(0.3)
+        global_job_manager.update_job_progress(
+            job_id,
+            section={"chunk_index": 2, "summary": "Section 2"},
+            completed_chunks=2,
+        )
+        global_job_manager.complete_job(job_id)
+
+    monkeypatch.setattr("vidscope.mcp._process_job_chunks", slow_process)
+
+    # Sync timeout very small (0.05s) to trigger immediate async return
+    res = analyze_video(
+        "test.mp4", chunk_duration_seconds=180.0, sync_timeout_seconds=0.05
     )
     assert isinstance(res, dict)
-    job_id = res["job_id"]
     assert res["status"] == "processing"
+    job_id = res["job_id"]
     assert res["total_chunks"] == 2
+    assert "estimated_completion_seconds" in res
 
-    status = get_job_status(job_id)
-    assert isinstance(status, dict)
-    assert status["job_id"] == job_id
-    assert status["status"] == "processing"
+    # Wait for completion
+    job = global_job_manager.get_job(job_id)
+    assert job is not None
+    job.completed_event.wait(timeout=2.0)
 
-    global_job_manager.complete_job(job_id)
-    status2 = get_job_status(job_id)
-    assert isinstance(status2, dict)
-    assert status2["status"] == "completed"
-    assert status2["progress_percentage"] == 100.0
+    # Test incremental streaming with since_chunk
+    status_all = get_job_status(job_id, since_chunk=0)
+    assert isinstance(status_all, dict)
+    assert status_all["status"] == "completed"
+    assert status_all["timeline_chunks_returned"] == 2
+    assert len(status_all["timeline"]) == 2
+
+    # Polling newly completed chunks with cursor
+    status_partial = get_job_status(job_id, since_chunk=1)
+    assert isinstance(status_partial, dict)
+    assert status_partial["timeline_chunks_returned"] == 1
+    assert status_partial["timeline"][0]["summary"] == "Section 2"
+
+
+def test_analyze_video_invalid_parameters() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.mcp import analyze_video
+
+    res_neg = analyze_video("test.mp4", start_seconds=-10.0)
+    assert isinstance(res_neg, ToolResult)
+    assert res_neg.is_error is True
+
+    res_zero_chunk = analyze_video("test.mp4", chunk_duration_seconds=0.0)
+    assert isinstance(res_zero_chunk, ToolResult)
+    assert res_zero_chunk.is_error is True
+
+    res_large_chunk = analyze_video("test.mp4", chunk_duration_seconds=300.0)
+    assert isinstance(res_large_chunk, ToolResult)
+    assert res_large_chunk.is_error is True
