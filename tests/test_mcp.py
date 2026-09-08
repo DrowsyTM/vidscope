@@ -459,7 +459,8 @@ def test_analyze_video_sync_success(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
 
-    def mock_process(job_id: str, src: str, chunks: list[tuple[float, float]]) -> None:
+    def mock_process(job_id: str, src: str, *args: Any, **kwargs: Any) -> None:
+        global_job_manager.set_job_chunks(job_id, [(0.0, 60.0)])
         global_job_manager.update_job_progress(
             job_id,
             section={
@@ -498,7 +499,8 @@ def test_analyze_video_async_fallback_and_get_job_status_streaming(
         ),
     )
 
-    def slow_process(job_id: str, src: str, chunks: list[tuple[float, float]]) -> None:
+    def slow_process(job_id: str, src: str, *args: Any, **kwargs: Any) -> None:
+        global_job_manager.set_job_chunks(job_id, [(0.0, 180.0), (180.0, 360.0)])
         time.sleep(0.3)
         global_job_manager.update_job_progress(
             job_id,
@@ -517,7 +519,11 @@ def test_analyze_video_async_fallback_and_get_job_status_streaming(
 
     # Sync timeout very small (0.05s) to trigger immediate async return
     res = analyze_video(
-        "test.mp4", chunk_duration_seconds=180.0, sync_timeout_seconds=0.05
+        "test.mp4",
+        start_seconds=0.0,
+        end_seconds=360.0,
+        chunk_duration_seconds=180.0,
+        sync_timeout_seconds=0.05,
     )
     assert isinstance(res, dict)
     assert res["status"] == "processing"
@@ -560,3 +566,87 @@ def test_analyze_video_invalid_parameters() -> None:
     res_large_chunk = analyze_video("test.mp4", chunk_duration_seconds=300.0)
     assert isinstance(res_large_chunk, ToolResult)
     assert res_large_chunk.is_error is True
+
+
+def test_get_job_status_failed_returns_tool_result() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import get_job_status
+
+    job = global_job_manager.create_job("test_fail.mp4", [(0.0, 60.0)])
+    global_job_manager.fail_job(job.job_id, "Video decoding error")
+
+    res = get_job_status(job.job_id)
+    assert isinstance(res, ToolResult)
+    assert res.is_error is True
+
+
+def test_search_video_language_support(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vidscope.backends.source import CaptionTrack, SourceInspection
+    from vidscope.mcp import search_video
+
+    track_es = CaptionTrack(
+        kind="manual",
+        language="es",
+        provider="test",
+        source_url=None,
+        segments=[
+            {"start_seconds": 5.0, "end_seconds": 10.0, "text": "Hola mundo"},
+        ],
+    )
+    monkeypatch.setattr(
+        "vidscope.backends.source.SourceInspector.inspect",
+        lambda self, req: SourceInspection(
+            source="test",
+            is_url=False,
+            duration_seconds=100.0,
+            caption_tracks=[track_es],
+        ),
+    )
+    monkeypatch.setattr(
+        "vidscope.backends.source.CaptionResolver.resolve",
+        lambda self, insp, req: track_es if req.get("language") == "es" else None,
+    )
+
+    res_es = search_video(query="Hola", source="test.mp4", language="es")
+    assert isinstance(res_es, dict)
+    assert res_es["matches_count"] == 1
+    assert res_es["matches"][0]["snippet"] == "Hola mundo"
+
+
+def test_analyze_video_idempotency_returns_existing_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vidscope.backends.source import SourceInspection
+    from vidscope.mcp import analyze_video
+
+    monkeypatch.setattr(
+        "vidscope.backends.source.SourceInspector.inspect",
+        lambda self, req: SourceInspection(
+            source="test", is_url=False, duration_seconds=60.0
+        ),
+    )
+    monkeypatch.setattr(
+        "vidscope.mcp._process_job_chunks", lambda *args, **kwargs: None
+    )
+
+    res1 = analyze_video(
+        "idempotent_test.mp4",
+        start_seconds=0.0,
+        end_seconds=60.0,
+        sync_timeout_seconds=0.05,
+    )
+    assert isinstance(res1, dict)
+    job_id_1 = res1["job_id"]
+
+    res2 = analyze_video(
+        "idempotent_test.mp4",
+        start_seconds=0.0,
+        end_seconds=60.0,
+        sync_timeout_seconds=0.05,
+    )
+    assert isinstance(res2, dict)
+    job_id_2 = res2["job_id"]
+
+    assert job_id_1 == job_id_2

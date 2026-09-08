@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored FastMCP server to deliver direct multimodal data blocks instead of requiring local filesystem artifact traversal.
 
 ### Fixed
+- Fixed `view_frame` and chunk keyframe artifact glob resolution when extracting frames into `<output_dir>/<request_id>/frames/`.
+- Prevented network duration inspection from blocking the `analyze_video` synchronous timeout window by moving probe inspection into background workers.
+- Added graceful degradation to visual-only keyframe analysis in `analyze_video` when remote caption fetching fails or is rate-limited and local ASR is unavailable.
+- Ensured terminal job failures in `get_job_status` and `analyze_video` emit standard `is_error=True` ToolResult envelopes.
+- Added `language` parameter and available language hints to `search_video`.
 - Fixed `ffprobe` execution failures by removing the unsupported `-nostdin` argument in `backends/media.py` and `backends/source.py`.
 - Corrected frame extraction seek offset math for nonzero start offsets in `backends/media.py`.
 - Fixed WebVTT timestamp decimal format to use standard `.` instead of `,`.

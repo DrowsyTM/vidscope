@@ -133,36 +133,94 @@ def get_video_info(source: str) -> dict[str, Any] | ToolResult:
 def _process_job_chunks(
     job_id: str,
     source: str,
-    chunks: list[tuple[float, float]],
+    start_seconds: float,
+    end_seconds: float | None,
+    chunk_duration_seconds: float,
 ) -> None:
     cache_dir = Path(tempfile.gettempdir()) / "vidscope_frames"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        for index, (start_sec, end_sec) in enumerate(chunks, start=1):
+        resolved_end = end_seconds
+        if resolved_end is None:
+            try:
+                inspector = SourceInspector()
+                inspection = inspector.inspect({"source": source})
+                resolved_end = inspection.duration_seconds
+            except Exception as exc:
+                logger.warning("Job %s duration inspection failed: %s", job_id, exc)
+                resolved_end = None
+
+        if resolved_end is None or resolved_end <= start_seconds:
+            resolved_end = start_seconds + chunk_duration_seconds
+
+        chunk_ranges: list[tuple[float, float]] = []
+        curr = start_seconds
+        while curr < resolved_end:
+            nxt = min(curr + chunk_duration_seconds, resolved_end)
+            chunk_ranges.append((curr, nxt))
+            curr = nxt
+
+        global_job_manager.set_job_chunks(job_id, chunk_ranges)
+
+        for index, (start_sec, end_sec) in enumerate(chunk_ranges, start=1):
             with tempfile.TemporaryDirectory(
                 prefix=f"vidscope_job_{job_id}_{index}_"
             ) as temp_dir:
                 output_dir = Path(temp_dir)
-                request = AnalyzeVideoRequest(
-                    source=source,
-                    time_range=TimeRange(
-                        start_seconds=start_sec,
-                        end_seconds=end_sec,
-                    ),
-                    tasks={
+
+                # Attempt analysis with transcript and frames.
+                # If captions fail (e.g. 429 on YouTube captions) and local ASR is unavailable,
+                # fall back to visual-only analysis so keyframes and OCR are still produced.
+                tasks_to_try = [
+                    {
                         AnalysisTask.METADATA,
                         AnalysisTask.TRANSCRIPT,
                         AnalysisTask.FRAMES,
                     },
-                    max_frames=4,
-                    max_frame_width=1280,
-                    output_directory=output_dir,
-                )
-                core_analyze_video(request)
+                    {
+                        AnalysisTask.METADATA,
+                        AnalysisTask.FRAMES,
+                    },
+                ]
+
+                res_ok = False
+                for tasks in tasks_to_try:
+                    try:
+                        request = AnalyzeVideoRequest(
+                            source=source,
+                            time_range=TimeRange(
+                                start_seconds=start_sec,
+                                end_seconds=end_sec,
+                            ),
+                            tasks=tasks,
+                            max_frames=4,
+                            max_frame_width=1280,
+                            output_directory=output_dir,
+                        )
+                        core_analyze_video(request)
+                        res_ok = True
+                        break
+                    except VideoAnalyzerFailure as exc:
+                        if tasks == tasks_to_try[0]:
+                            logger.warning(
+                                "Job %s chunk %d: transcript extraction failed (%s); falling back to visual-only",
+                                job_id,
+                                index,
+                                exc,
+                            )
+                            continue
+                        raise
+
+                if not res_ok:
+                    raise RuntimeError(f"Chunk {index} analysis failed")
 
                 transcript_segments: list[dict[str, Any]] = []
-                transcript_files = list(output_dir.glob("runs/*/transcript.jsonl"))
+                transcript_files = sorted(
+                    f
+                    for f in output_dir.rglob("transcript.jsonl")
+                    if "staging" not in f.parts
+                )
                 if transcript_files:
                     for line in (
                         transcript_files[0].read_text(encoding="utf-8").splitlines()
@@ -187,7 +245,11 @@ def _process_job_chunks(
                             except Exception:
                                 continue
 
-                frame_files = sorted(output_dir.glob("runs/*/frames/frame-*.jpg"))
+                frame_files = sorted(
+                    f
+                    for f in output_dir.rglob("frame-*.jpg")
+                    if "staging" not in f.parts
+                )
                 keyframes: list[dict[str, Any]] = []
                 n_frames = len(frame_files)
                 timestamps = [
@@ -245,6 +307,11 @@ def _process_job_chunks(
                 full_transcript = " ".join(
                     s["text"] for s in transcript_segments if s["text"]
                 )
+                summary_text = (
+                    full_transcript[:4_000]
+                    if full_transcript
+                    else "Visual keyframes available; speech transcript unavailable for this chunk."
+                )
 
                 section = {
                     "chunk_index": index,
@@ -253,7 +320,7 @@ def _process_job_chunks(
                     "formatted_range": (
                         f"{format_timestamp(start_sec)} - {format_timestamp(end_sec)}"
                     ),
-                    "summary": full_transcript[:4_000],
+                    "summary": summary_text,
                     "keyframes": keyframes,
                 }
                 global_job_manager.update_job_progress(
@@ -290,7 +357,7 @@ def analyze_video(
     if start_seconds < 0:
         error = AnalysisError(
             code=ErrorCode.INVALID_REQUEST,
-            stage="validate_source",
+            stage="analyze_video",
             message="start_seconds must be >= 0",
             retryable=False,
         )
@@ -300,7 +367,7 @@ def analyze_video(
     if chunk_duration_seconds <= 0 or chunk_duration_seconds > 180.0:
         error = AnalysisError(
             code=ErrorCode.INVALID_REQUEST,
-            stage="validate_source",
+            stage="analyze_video",
             message="chunk_duration_seconds must be > 0 and <= 180.0",
             retryable=False,
         )
@@ -308,43 +375,53 @@ def analyze_video(
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     try:
-        resolved_end = end_seconds
-        if resolved_end is None:
-            inspector = SourceInspector()
-            inspection = inspector.inspect({"source": source})
-            resolved_end = inspection.duration_seconds
+        job_key = f"{source}_{start_seconds}_{end_seconds}_{chunk_duration_seconds}"
+        existing_job = global_job_manager.find_job_by_key(job_key)
+        if existing_job is not None and existing_job.status in (
+            "processing",
+            "completed",
+        ):
+            job = existing_job
+        else:
+            initial_chunks: list[tuple[float, float]] = []
+            if end_seconds is not None and end_seconds > start_seconds:
+                curr = start_seconds
+                while curr < end_seconds:
+                    nxt = min(curr + chunk_duration_seconds, end_seconds)
+                    initial_chunks.append((curr, nxt))
+                    curr = nxt
+            job = global_job_manager.create_job(source, initial_chunks, job_key=job_key)
 
-        if resolved_end is None or resolved_end <= start_seconds:
-            resolved_end = start_seconds + chunk_duration_seconds
-
-        chunk_ranges: list[tuple[float, float]] = []
-        curr = start_seconds
-        while curr < resolved_end:
-            nxt = min(curr + chunk_duration_seconds, resolved_end)
-            chunk_ranges.append((curr, nxt))
-            curr = nxt
-
-        job = global_job_manager.create_job(source, chunk_ranges)
-
-        thread = threading.Thread(
-            target=_process_job_chunks,
-            args=(job.job_id, source, chunk_ranges),
-            daemon=True,
-            name=f"vidscope-worker-{job.job_id}",
-        )
-        thread.start()
+            thread = threading.Thread(
+                target=_process_job_chunks,
+                args=(
+                    job.job_id,
+                    source,
+                    start_seconds,
+                    end_seconds,
+                    chunk_duration_seconds,
+                ),
+                daemon=True,
+                name=f"vidscope-worker-{job.job_id}",
+            )
+            thread.start()
 
         # Wait synchronously up to sync_timeout_seconds for fast completion
         job.completed_event.wait(timeout=max(0.1, sync_timeout_seconds))
 
         if job.status == "completed":
+            resolved_end = (
+                job.chunks[-1]["end_seconds"]
+                if job.chunks
+                else (end_seconds or (start_seconds + chunk_duration_seconds))
+            )
             return {
                 "status": "completed",
                 "job_id": job.job_id,
                 "source": source,
                 "start_seconds": start_seconds,
                 "end_seconds": resolved_end,
-                "total_chunks": len(chunk_ranges),
+                "total_chunks": job.total_chunks,
                 "timeline": job.available_sections,
                 "hint": "Call view_frame(frame_id='<frame_id>') to inspect any keyframe image directly in conversation context.",
             }
@@ -357,18 +434,21 @@ def analyze_video(
                 retryable=False,
             )
             payload = _error_payload(error)
+            payload["job_id"] = job.job_id
             return ToolResult(
                 content=payload, structured_content=payload, is_error=True
             )
 
-        # Longer task: return async handoff envelope with ETA
+        processing_end: float | None = (
+            job.chunks[-1]["end_seconds"] if job.chunks else end_seconds
+        )
         return {
             "status": "processing",
             "job_id": job.job_id,
             "source": source,
             "start_seconds": start_seconds,
-            "end_seconds": resolved_end,
-            "total_chunks": len(chunk_ranges),
+            "end_seconds": processing_end,
+            "total_chunks": job.total_chunks,
             "completed_chunks": job.completed_chunks,
             "estimated_completion_seconds": round(job.estimated_total_seconds, 1),
             "initial_timeline": job.available_sections,
@@ -410,6 +490,17 @@ def get_job_status(job_id: str, since_chunk: int = 0) -> dict[str, Any] | ToolRe
             retryable=False,
         )
         payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    if job.status == "failed":
+        error = AnalysisError(
+            code=ErrorCode.INTERNAL_STAGE_FAILED,
+            stage="analyze_video",
+            message=job.error or "analysis job failed",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        payload["job_id"] = job_id
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     return job.to_dict(since_chunk=since_chunk)
@@ -508,7 +599,11 @@ def view_frame(
                         content=payload, structured_content=payload, is_error=True
                     )
 
-                frame_files = list(output_dir.glob("runs/*/frames/frame-*.jpg"))
+                frame_files = sorted(
+                    f
+                    for f in output_dir.rglob("frame-*.jpg")
+                    if "staging" not in f.parts
+                )
                 if not frame_files:
                     error = AnalysisError(
                         code=ErrorCode.MEDIA_DECODE_FAILED,
@@ -596,6 +691,7 @@ def search_video(
     query: str,
     source: str | None = None,
     job_id: str | None = None,
+    language: str | None = None,
     is_regex: bool = False,
     case_sensitive: bool = False,
     max_matches: int = 20,
@@ -609,7 +705,7 @@ def search_video(
     if not cleaned_query:
         error = AnalysisError(
             code=ErrorCode.INVALID_REQUEST,
-            stage="validate_source",
+            stage="search_video",
             message="search query cannot be empty",
             retryable=False,
         )
@@ -666,18 +762,26 @@ def search_video(
         try:
             inspector = SourceInspector()
             inspection = inspector.inspect({"source": source})
+            target_lang = language or "en"
             resolver = CaptionResolver()
-            track = resolver.resolve(inspection, {"language": "en"})
+            track = resolver.resolve(inspection, {"language": target_lang})
 
             if track is None or not track.segments:
+                avail = [t.language for t in inspection.caption_tracks if t.language]
+                avail_summary = (
+                    f" (available languages reported: {sorted(set(avail))[:8]})"
+                    if avail
+                    else ""
+                )
                 return {
                     "source": source,
                     "query": query,
+                    "language": target_lang,
                     "matches_count": 0,
                     "matches": [],
                     "message": (
-                        "No native captions available for this source. "
-                        "Call analyze_video(source) to transcribe the speech first, "
+                        f"No native captions available for source in language '{target_lang}'{avail_summary}. "
+                        "Call analyze_video(source) to transcribe or visually analyze the video, "
                         "then search with job_id."
                     ),
                 }

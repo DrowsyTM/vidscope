@@ -55,6 +55,7 @@ class JobState:
     error: str | None = None
     work_dir: Path | None = None
     completed_event: threading.Event = field(default_factory=threading.Event)
+    job_key: str | None = None
 
     def to_dict(self, since_chunk: int = 0) -> dict[str, Any]:
         now = time.time()
@@ -95,6 +96,7 @@ class JobManager:
         source: str,
         chunk_ranges: list[tuple[float, float]],
         estimated_seconds_per_chunk: float = 6.0,
+        job_key: str | None = None,
     ) -> JobState:
         with self._lock:
             self._cleanup_locked()
@@ -124,9 +126,38 @@ class JobManager:
                 error=None,
                 work_dir=work_dir,
                 completed_event=threading.Event(),
+                job_key=job_key,
             )
             self._jobs[job_id] = job
             return job
+
+    def find_job_by_key(self, job_key: str) -> JobState | None:
+        with self._lock:
+            self._cleanup_locked()
+            for job in self._jobs.values():
+                if job.job_key == job_key and job.status != "failed":
+                    return job
+            return None
+
+    def set_job_chunks(
+        self,
+        job_id: str,
+        chunk_ranges: list[tuple[float, float]],
+        estimated_seconds_per_chunk: float = 6.0,
+    ) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.total_chunks = len(chunk_ranges)
+            job.chunks = [
+                {"start_seconds": round(s, 2), "end_seconds": round(e, 2)}
+                for s, e in chunk_ranges
+            ]
+            job.estimated_total_seconds = max(
+                1.0, len(chunk_ranges) * estimated_seconds_per_chunk
+            )
+            job.updated_at = time.time()
 
     def get_job(self, job_id: str) -> JobState | None:
         with self._lock:
