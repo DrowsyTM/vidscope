@@ -19,12 +19,11 @@ from .backends.ocr import TesseractBackend
 from .backends.source import CaptionResolver, SourceBackendFailure, SourceInspector
 from .contracts import (
     AnalysisError,
-    AnalysisResult,
     AnalyzeVideoRequest,
     ErrorCode,
     TimeRange,
 )
-from .core import AnalysisContext, VideoAnalyzerFailure
+from .core import VideoAnalyzerFailure
 from .core import analyze_video as core_analyze_video
 from .jobs import format_timestamp, global_job_manager
 from .logging import configure_logging
@@ -37,53 +36,6 @@ mcp = FastMCP("vidscope")
 
 def _error_payload(error: AnalysisError) -> dict[str, Any]:
     return error.model_dump(mode="json")
-
-
-@mcp.tool(
-    name="analyze_video",
-    annotations={"readOnlyHint": False, "idempotentHint": False},
-)
-def analyze_video(
-    request: AnalyzeVideoRequest,
-    ctx: Any = None,
-) -> AnalysisResult | ToolResult:
-    """Analyze one bounded local or HTTPS video through the shared core API."""
-
-    context: AnalysisContext | None = None
-    if ctx is not None:
-
-        def progress(stage: str, progress: float, total: float, message: str) -> None:
-            try:
-                if hasattr(ctx, "info"):
-                    ctx.info(f"[{stage}] {message}")
-            except Exception:
-                pass
-
-        context = AnalysisContext(progress_callback=progress)
-
-    try:
-        return core_analyze_video(request, context=context)
-    except VideoAnalyzerFailure as exc:
-        payload = _error_payload(exc.error)
-        return ToolResult(content=payload, structured_content=payload, is_error=True)
-    except (ValidationError, ValueError, TypeError) as exc:
-        error = AnalysisError(
-            code=ErrorCode.INVALID_REQUEST,
-            stage="validate_source",
-            message=str(exc)[:2_048] or "request validation failed",
-            retryable=False,
-        )
-        payload = _error_payload(error)
-        return ToolResult(content=payload, structured_content=payload, is_error=True)
-    except Exception as exc:  # noqa: BLE001 - adapter boundary must return a typed envelope
-        error = AnalysisError(
-            code=ErrorCode.INTERNAL_STAGE_FAILED,
-            stage="orchestration",
-            message=str(exc)[:2_048] or "analysis failed",
-            retryable=False,
-        )
-        payload = _error_payload(error)
-        return ToolResult(content=payload, structured_content=payload, is_error=True)
 
 
 @mcp.tool(
@@ -955,7 +907,6 @@ def main() -> None:
 
 
 __all__ = [
-    "analyze_video",
     "get_job_status",
     "get_video_info",
     "get_video_timeline",

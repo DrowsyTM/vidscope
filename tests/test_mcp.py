@@ -11,107 +11,6 @@ from typing import Any
 import pytest
 
 
-def _construct(model: type[Any], **values: Any) -> Any:
-    """Construct a contract model without coupling adapter tests to defaults."""
-    fields = getattr(model, "model_fields", {})
-    selected = {
-        name: value for name, value in values.items() if not fields or name in fields
-    }
-    return model.model_construct(**selected)
-
-
-def _request(source: Path, output: Path) -> Any:
-    from vidscope.contracts import AnalyzeVideoRequest, TimeRange
-
-    return AnalyzeVideoRequest(
-        source=str(source),
-        time_range=TimeRange(start_seconds=0, end_seconds=30),
-        tasks={"metadata"},
-        output_directory=output,
-    )
-
-
-def _success_result() -> Any:
-    from vidscope.contracts import AnalysisResult, AnalysisSummary, ArtifactRef
-
-    uri = "vidscope://runs/run-mcp/artifacts/transcript"
-    artifact = _construct(
-        ArtifactRef,
-        artifact_id="transcript",
-        uri=uri,
-        media_type="application/jsonl",
-        byte_size=32,
-        sha256="b" * 64,
-    )
-    summary = _construct(
-        AnalysisSummary,
-        source="file:///tmp/clip.mp4",
-        duration_seconds=30.0,
-        task_count=1,
-    )
-    return _construct(
-        AnalysisResult,
-        ok=True,
-        status="completed",
-        summary=summary,
-        stages=[],
-        warnings=[],
-        manifest_uri="vidscope://runs/run-mcp/manifest",
-        artifacts=[artifact],
-        artifact_refs=[artifact],
-    )
-
-
-def _error(
-    code: str = "INTERNAL_STAGE_FAILED",
-    stage: str = "transcribe",
-    message: str = "deterministic test failure",
-) -> Any:
-    from vidscope.contracts import AnalysisError
-
-    return _construct(
-        AnalysisError,
-        ok=False,
-        status="failed",
-        code=code,
-        stage=stage,
-        message=message,
-        retryable=False,
-        diagnostics={"detail": "fixture"},
-        artifact_refs=[],
-        manifest_uri="vidscope://runs/run-mcp/manifest",
-    )
-
-
-def _failure(error: Any) -> BaseException:
-    from vidscope.core import VideoAnalyzerFailure
-
-    return VideoAnalyzerFailure(error)
-
-
-def _patch_core(monkeypatch: pytest.MonkeyPatch, replacement: Any) -> Any:
-    """Patch both the core module and the common FastMCP import alias."""
-    import vidscope.core as core_module
-    import vidscope.mcp as mcp_module
-
-    original = core_module.analyze_video
-    monkeypatch.setattr(core_module, "analyze_video", replacement)
-    for name, value in list(vars(mcp_module).items()):
-        if name in {"core_analyze_video", "_core_analyze_video"} or value is original:
-            monkeypatch.setattr(mcp_module, name, replacement)
-    return mcp_module
-
-
-def _callable_tool(tool: Any) -> Any:
-    if callable(tool):
-        return tool
-    for name in ("fn", "function", "handler"):
-        candidate = getattr(tool, name, None)
-        if callable(candidate):
-            return candidate
-    raise AssertionError(f"registered analyze_video tool is not callable: {tool!r}")
-
-
 async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         value = await value
@@ -127,40 +26,6 @@ def _await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return asyncio.run(_maybe_await(value))
     return value
-
-
-def _content_payload(value: Any) -> Any:
-    """Decode a ToolResult content block without requiring one wire shape."""
-    if isinstance(value, Mapping):
-        if value.get("type") == "text" and "text" in value:
-            return _content_payload(value["text"])
-        return dict(value)
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value
-    if isinstance(value, (list, tuple)):
-        decoded = [_content_payload(item) for item in value]
-        return decoded[0] if len(decoded) == 1 else decoded
-    model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        return _content_payload(model_dump(mode="json"))
-    text = getattr(value, "text", None)
-    if text is not None:
-        return _content_payload(text)
-    return value
-
-
-def _assert_tool_result(
-    returned: Any, expected: Mapping[str, Any], *, is_error: bool
-) -> None:
-    from fastmcp.tools.base import ToolResult
-
-    assert isinstance(returned, ToolResult)
-    assert returned.is_error is is_error
-    assert returned.structured_content == expected
-    assert _content_payload(returned.content) == expected
 
 
 def _registered_tools(server: Any) -> list[Any] | None:
@@ -212,7 +77,7 @@ def _tool_annotation(tool: Any, name: str) -> Any:
     )
 
 
-def test_mcp_registers_only_analyze_video_with_non_mutating_annotations() -> None:
+def test_mcp_registers_expected_tools_with_annotations() -> None:
     from vidscope.mcp import mcp
 
     list_tools = getattr(mcp, "list_tools", None)
@@ -225,7 +90,8 @@ def test_mcp_registers_only_analyze_video_with_non_mutating_annotations() -> Non
     if tools is None:
         pytest.skip("FastMCP version does not expose tool introspection")
     tool_map = {_field(t, "name"): t for t in tools}
-    assert "analyze_video" in tool_map
+    assert len(tool_map) == 7
+    assert "analyze_video" not in tool_map
     assert "get_video_info" in tool_map
     assert "search_video" in tool_map
     assert "get_video_transcript" in tool_map
@@ -234,8 +100,6 @@ def test_mcp_registers_only_analyze_video_with_non_mutating_annotations() -> Non
     assert "start_video_analysis" in tool_map
     assert "get_job_status" in tool_map
 
-    assert _tool_annotation(tool_map["analyze_video"], "readOnlyHint") is False
-    assert _tool_annotation(tool_map["analyze_video"], "idempotentHint") is False
     assert _tool_annotation(tool_map["get_video_info"], "readOnlyHint") is True
     assert _tool_annotation(tool_map["get_video_info"], "idempotentHint") is True
     assert _tool_annotation(tool_map["search_video"], "readOnlyHint") is True
@@ -244,129 +108,6 @@ def test_mcp_registers_only_analyze_video_with_non_mutating_annotations() -> Non
     assert _tool_annotation(tool_map["get_video_timeline"], "readOnlyHint") is True
     assert _tool_annotation(tool_map["start_video_analysis"], "readOnlyHint") is False
     assert _tool_annotation(tool_map["get_job_status"], "readOnlyHint") is True
-
-
-def test_mcp_success_returns_shared_result_unchanged_and_compact_artifacts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from vidscope.mcp import analyze_video
-
-    source = tmp_path / "clip.mp4"
-    source.write_bytes(b"deterministic fixture")
-    output = tmp_path / "results"
-    output.mkdir()
-    request = _request(source, output)
-    expected = _success_result()
-    seen: list[Any] = []
-
-    def fake_core(request_arg: Any, *, context: Any = None) -> Any:
-        seen.append((request_arg, context))
-        return expected
-
-    _patch_core(monkeypatch, fake_core)
-    returned = _callable_tool(analyze_video)(request)
-
-    assert returned is expected
-    assert len(seen) == 1
-    assert seen[0][0] is request
-    assert seen[0][1] is None
-    assert request.tasks == {"metadata"}
-    payload = returned.model_dump(mode="json")
-    assert payload["ok"] is True
-    assert payload["status"] == "completed"
-    assert payload["manifest_uri"].startswith("vidscope://")
-    assert all(item["uri"].startswith("vidscope://") for item in payload["artifacts"])
-
-
-def test_mcp_terminal_failure_is_error_tool_result_with_shared_error_payload(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from vidscope.mcp import analyze_video
-
-    source = tmp_path / "clip.mp4"
-    source.write_bytes(b"deterministic fixture")
-    output = tmp_path / "results"
-    output.mkdir()
-    request = _request(source, output)
-    error = _error()
-
-    def fake_core(request_arg: Any, *, context: Any = None) -> Any:
-        raise _failure(error)
-
-    _patch_core(monkeypatch, fake_core)
-    returned = _callable_tool(analyze_video)(request)
-
-    expected = error.model_dump(mode="json")
-    _assert_tool_result(returned, expected, is_error=True)
-    assert returned.structured_content["ok"] is False
-    assert returned.structured_content["code"] == "INTERNAL_STAGE_FAILED"
-
-
-def test_mcp_empty_transcript_is_not_a_successful_tool_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from vidscope.mcp import analyze_video
-
-    source = tmp_path / "clip.mp4"
-    source.write_bytes(b"deterministic fixture")
-    output = tmp_path / "results"
-    output.mkdir()
-    request = _request(source, output)
-    error = _error(
-        code="INTERNAL_STAGE_FAILED",
-        stage="transcribe",
-        message="empty transcript artifact rejected",
-    )
-
-    def fake_core(request_arg: Any, *, context: Any = None) -> Any:
-        raise _failure(error)
-
-    _patch_core(monkeypatch, fake_core)
-    returned = _callable_tool(analyze_video)(request)
-
-    expected = error.model_dump(mode="json")
-    _assert_tool_result(returned, expected, is_error=True)
-    assert returned.structured_content["ok"] is False
-    assert returned.structured_content["status"] != "completed"
-    assert returned.structured_content["stage"] == "transcribe"
-    assert (
-        returned.structured_content["message"] == "empty transcript artifact rejected"
-    )
-    assert returned.structured_content["code"] == "INTERNAL_STAGE_FAILED"
-    assert returned.is_error is True
-    expected = error.model_dump(mode="json")
-    assert returned.structured_content == expected
-    assert _content_payload(returned.content) == expected
-    assert returned.structured_content["ok"] is False
-    assert returned.structured_content["code"] == "INTERNAL_STAGE_FAILED"
-
-
-def test_mcp_empty_transcript_returns_tool_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from fastmcp.tools.base import ToolResult
-
-    from vidscope.mcp import analyze_video
-
-    source = tmp_path / "clip.mp4"
-    source.write_bytes(b"deterministic fixture")
-    output = tmp_path / "results"
-    output.mkdir()
-    request = _request(source, output)
-    error = _error(stage="transcribe", message="transcript artifact was empty")
-
-    def fake_core(request_arg: Any, *, context: Any = None) -> Any:
-        raise _failure(error)
-
-    _patch_core(monkeypatch, fake_core)
-    returned = _callable_tool(analyze_video)(request)
-
-    assert isinstance(returned, ToolResult)
-    assert returned.is_error is True
-    assert returned.structured_content is not None
-    assert returned.structured_content["ok"] is False
-    assert returned.structured_content["stage"] == "transcribe"
-    assert returned.structured_content["code"] == "INTERNAL_STAGE_FAILED"
 
 
 def _resource_error_code(value: Any) -> str | None:
