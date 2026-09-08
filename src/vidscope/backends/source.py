@@ -710,7 +710,6 @@ class SourceInspector:
         )
         command = [
             str(ffprobe),
-            "-nostdin",
             "-protocol_whitelist",
             "file,pipe,crypto,data",
             "-v",
