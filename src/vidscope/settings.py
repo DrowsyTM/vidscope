@@ -21,6 +21,10 @@ FFMPEG_BIN_ENV: Final = "VIDSCOPE_FFMPEG_BIN"
 FFPROBE_BIN_ENV: Final = "VIDSCOPE_FFPROBE_BIN"
 MODEL_CACHE_ENV: Final = "VIDSCOPE_MODEL_CACHE"
 ALLOWED_OUTPUT_ROOT_ENV: Final = "VIDSCOPE_ALLOWED_OUTPUT_ROOT"
+COOKIES_FILE_ENV: Final = "VIDSCOPE_COOKIES_FILE"
+WHISPER_MODEL_ENV: Final = "VIDSCOPE_WHISPER_MODEL"
+WHISPER_DEVICE_ENV: Final = "VIDSCOPE_WHISPER_DEVICE"
+WHISPER_COMPUTE_TYPE_ENV: Final = "VIDSCOPE_WHISPER_COMPUTE_TYPE"
 LEGACY_TESSDATA_PREFIX_ENV: Final = "TESSDATA_PREFIX"
 
 
@@ -40,6 +44,10 @@ class Settings:
     ffprobe_bin: Path | None = None
     model_cache: Path | None = None
     allowed_output_root: Path | None = None
+    cookies_file: Path | None = None
+    whisper_model: str | None = None
+    whisper_device: str | None = None
+    whisper_compute_type: str | None = None
     cloud_allowed: bool = False
 
     def __post_init__(self) -> None:
@@ -91,6 +99,13 @@ def _normalize_path(
     return path
 
 
+def _normalize_string(raw_value: str | None) -> str | None:
+    if raw_value is None or not isinstance(raw_value, str):
+        return None
+    value = raw_value.strip()
+    return value or None
+
+
 def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     """Load deterministic local settings from ``environ`` or ``os.environ``.
 
@@ -133,6 +148,13 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
             variable_name=ALLOWED_OUTPUT_ROOT_ENV,
             require_absolute=True,
         ),
+        cookies_file=_normalize_path(
+            values.get(COOKIES_FILE_ENV),
+            variable_name=COOKIES_FILE_ENV,
+        ),
+        whisper_model=_normalize_string(values.get(WHISPER_MODEL_ENV)),
+        whisper_device=_normalize_string(values.get(WHISPER_DEVICE_ENV)),
+        whisper_compute_type=_normalize_string(values.get(WHISPER_COMPUTE_TYPE_ENV)),
     )
 
 
@@ -149,13 +171,17 @@ def get_settings() -> Settings:
 __all__ = [
     "ALLOWED_INPUT_ROOT_ENV",
     "ALLOWED_OUTPUT_ROOT_ENV",
+    "COOKIES_FILE_ENV",
     "FFMPEG_BIN_ENV",
     "FFPROBE_BIN_ENV",
     "LEGACY_TESSDATA_PREFIX_ENV",
     "MODEL_CACHE_ENV",
+    "Settings",
     "TESSDATA_PREFIX_ENV",
     "TESSERACT_BIN_ENV",
-    "Settings",
+    "WHISPER_COMPUTE_TYPE_ENV",
+    "WHISPER_DEVICE_ENV",
+    "WHISPER_MODEL_ENV",
     "get_settings",
     "load_settings",
 ]

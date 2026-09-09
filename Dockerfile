@@ -25,7 +25,7 @@ COPY --chown=appuser:appuser requirements-docker.txt /home/appuser/app/requireme
 RUN pip install --no-cache-dir --user --require-hashes -r /home/appuser/app/requirements-docker.txt
 
 COPY --chown=appuser:appuser . /home/appuser/app
-RUN pip install --no-cache-dir --user --no-deps --no-index .
+RUN pip install --no-cache-dir --user --no-deps .
 
 ENTRYPOINT ["vidscope"]
 CMD ["mcp"]

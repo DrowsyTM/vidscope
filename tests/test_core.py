@@ -249,6 +249,7 @@ class FakeAsrBackend:
     log: EventLog
     empty: bool = False
     fail: bool = False
+    segments: list[dict[str, Any]] | None = None
 
     def transcribe(
         self, audio: Any, request: AnalyzeVideoRequest, *args: Any, **kwargs: Any
@@ -257,6 +258,11 @@ class FakeAsrBackend:
         self.log.capture_manifest(request)
         if self.fail:
             raise RuntimeError("fixture ASR failure")
+        if self.segments is not None:
+            return {
+                "segments": [dict(s) for s in self.segments],
+                "metadata": {"language": request.language, "provider": "fake-local"},
+            }
         segments: list[dict[str, Any]] = []
         if not self.empty:
             segments.append(
@@ -998,3 +1004,66 @@ def test_url_acquisition_sets_ytdlp_ignore_config_and_never_calls_cloud(
         ]
         == "completed"
     )
+
+
+def test_transcribe_offsets_segments_and_words_by_start_seconds(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "chunk-source.mp4"
+    source.write_bytes(b"chunk source")
+    log = EventLog(tmp_path)
+    inspector = FakeSourceInspector(log, tracks=[])
+    resolver = FakeCaptionResolver(log, None)
+    media = FakeMediaAcquirer(log, source)
+    media_backend = FakeMediaBackend(log, tmp_path / "media-work")
+    media_backend.work_dir.mkdir()
+    asr_backend = FakeAsrBackend(
+        log,
+        segments=[
+            {
+                "start_seconds": 2.5,
+                "end_seconds": 8.0,
+                "text": "spoken dialogue in chunk",
+                "words": [
+                    {"start_seconds": 2.5, "end_seconds": 4.0, "word": "spoken"},
+                    {"start_seconds": 4.1, "end_seconds": 8.0, "word": "dialogue"},
+                ],
+            }
+        ],
+    )
+    request = _request(
+        tmp_path,
+        source,
+        tasks={"metadata", "transcript"},
+        time_range=TimeRange(start_seconds=180.0, end_seconds=360.0),
+        asr_enabled=True,
+    )
+
+    result = analyze_video(
+        request,
+        context=_context(
+            log,
+            inspector,
+            resolver,
+            media,
+            media_backend,
+            asr_backend=asr_backend,
+        ),
+    )
+
+    assert result.status == "completed"
+    transcript_files = list(_run_dir(request).rglob("transcript.jsonl"))
+    assert len(transcript_files) == 1
+    lines = [
+        json.loads(line)
+        for line in transcript_files[0].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(lines) == 1
+    row = lines[0]
+    assert row["start_seconds"] == 182.5
+    assert row["end_seconds"] == 188.0
+    assert row["words"][0]["start_seconds"] == 182.5
+    assert row["words"][0]["end_seconds"] == 184.0
+    assert row["words"][1]["start_seconds"] == 184.1
+    assert row["words"][1]["end_seconds"] == 188.0

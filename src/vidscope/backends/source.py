@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -25,7 +26,7 @@ import urllib.request
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from ..contracts import (
     AnalysisError,
@@ -710,7 +711,6 @@ class SourceInspector:
         )
         command = [
             str(ffprobe),
-            "-nostdin",
             "-protocol_whitelist",
             "file,pipe,crypto,data",
             "-v",
@@ -852,6 +852,17 @@ class SourceInspector:
             "getcomments": False,
             "logger": _MuffledLogger(),
         }
+        node_bin = shutil.which("node")
+        if node_bin:
+            options["js_runtimes"] = {"node": {"path": node_bin}}
+        cookies_file = _settings_value(self.settings, "cookies_file", None)
+        if not cookies_file:
+            with contextlib.suppress(Exception):
+                from ..settings import get_settings
+
+                cookies_file = getattr(get_settings(), "cookies_file", None)
+        if cookies_file and Path(cookies_file).is_file():
+            options["cookiefile"] = str(cookies_file)
         try:
             with _yt_env():
                 info = self._extract_info(source, options)
@@ -1160,18 +1171,20 @@ class CaptionResolver:
     def resolve(
         self, inspection: SourceInspection, request: Any
     ) -> CaptionTrack | None:
+        source = str(getattr(inspection, "source", "") or "")
+        is_url = bool(getattr(inspection, "is_url", False))
+        is_youtube = is_url and bool(
+            _transcript_video_id(source)
+            or "youtube.com" in source.lower()
+            or "youtu.be" in source.lower()
+        )
+        # Remote YouTube caption pulling is disabled; rely on local ASR
+        if is_youtube:
+            return None
+
         requested_language = (
             _text(_mapping_value(request, "language", "en"), limit=64) or "en"
         )
-        video_id = (
-            _transcript_video_id(inspection.source) if inspection.is_url else None
-        )
-        if video_id:
-            track = self._resolve_youtube(
-                video_id, inspection.source, requested_language
-            )
-            if track is not None:
-                return track
         selected = _choose_track(inspection.caption_tracks, requested_language)
         if selected is None:
             return None
@@ -1211,7 +1224,25 @@ class CaptionResolver:
             try:
                 from youtube_transcript_api import YouTubeTranscriptApi
 
-                provider = YouTubeTranscriptApi()
+                try:
+                    from curl_cffi.requests import Session as CurlSession
+
+                    session: Any = CurlSession(impersonate="chrome124")
+                    cookies_file = _settings_value(self.settings, "cookies_file", None)
+                    if not cookies_file:
+                        with contextlib.suppress(Exception):
+                            from ..settings import get_settings
+
+                            cookies_file = getattr(get_settings(), "cookies_file", None)
+                    if cookies_file and Path(cookies_file).is_file():
+                        import http.cookiejar
+
+                        cj = http.cookiejar.MozillaCookieJar(str(cookies_file))
+                        cj.load(ignore_discard=True, ignore_expires=True)
+                        session.cookies.update(cj)
+                    provider = YouTubeTranscriptApi(http_client=cast(Any, session))
+                except Exception:
+                    provider = YouTubeTranscriptApi()
             except (ImportError, ModuleNotFoundError):
                 return None
             except Exception:
@@ -1321,6 +1352,39 @@ class CaptionResolver:
                         return target(track.source_url)
                     except Exception:
                         return None
+        cookies_file = _settings_value(self.settings, "cookies_file", None)
+        if not cookies_file:
+            with contextlib.suppress(Exception):
+                from ..settings import get_settings
+
+                cookies_file = getattr(get_settings(), "cookies_file", None)
+
+        try:
+            from curl_cffi import requests as curl_requests
+
+            session: Any = curl_requests.Session(impersonate="chrome124")
+            if cookies_file and Path(cookies_file).is_file():
+                import http.cookiejar
+
+                cj = http.cookiejar.MozillaCookieJar(str(cookies_file))
+                cj.load(ignore_discard=True, ignore_expires=True)
+                session.cookies.update(cj)
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Referer": "https://www.youtube.com/",
+            }
+            curl_res = session.get(track.source_url, headers=headers, timeout=20)
+            if curl_res.status_code == 200:
+                payload = curl_res.content[: self.max_caption_bytes + 1]
+                if len(payload) <= self.max_caption_bytes:
+                    return payload
+        except Exception:
+            pass
+
         request = urllib.request.Request(
             track.source_url, headers={"User-Agent": "vidscope/0.1"}
         )
@@ -1457,12 +1521,9 @@ def _format_choice(
     need_video: bool = False,
     need_audio: bool = False,
     window_seconds: float | None = None,
+    language: str | None = None,
 ) -> str:
-    candidates: list[tuple[int, int, str]] = []
-    for item in formats:
-        format_id = item.get("format_id")
-        if not format_id:
-            continue
+    def _est_size(item: Mapping[str, Any]) -> float | None:
         size = _finite_float(item.get("filesize")) or _finite_float(
             item.get("filesize_approx")
         )
@@ -1470,19 +1531,117 @@ def _format_choice(
             bitrate = _finite_float(item.get("tbr"))
             if bitrate is not None:
                 size = bitrate * 1_000 * window_seconds / 8 * 1.25
-        if size is not None and size > max_bytes:
+        return size
+
+    def _is_v(item: Mapping[str, Any]) -> bool:
+        return str(item.get("vcodec", "")).lower() not in {"", "none"}
+
+    def _is_a(item: Mapping[str, Any]) -> bool:
+        return str(item.get("acodec", "")).lower() not in {"", "none"}
+
+    def _audio_rank(item: Mapping[str, Any]) -> tuple[int, int, int]:
+        target = (language or "en").lower().strip()
+        target_base = target.split("-")[0].split("_")[0]
+        track_lang = str(item.get("language") or "").lower().strip()
+        track_base = track_lang.split("-")[0].split("_")[0] if track_lang else ""
+        note = str(item.get("format_note") or "").lower()
+        is_orig = bool(
+            item.get("is_original")
+            or "original" in note
+            or "(original)" in note
+            or track_lang == "original"
+        )
+        is_def = bool(
+            item.get("is_default") or "default" in note or "(default)" in note
+        )
+        lang_pref = int(_finite_float(item.get("language_preference")) or 0)
+        quality = int(
+            _finite_float(item.get("abr")) or _finite_float(item.get("tbr")) or 0
+        )
+
+        if track_lang == target or (track_base and track_base == target_base):
+            tier = 0 if (is_orig or is_def) else 1
+        elif is_orig or is_def:
+            tier = 2
+        elif not track_lang or track_lang in {"und", "none", "zxx"}:
+            tier = 3
+        else:
+            tier = 4
+
+        return (tier, -lang_pref, -quality)
+
+    if need_video and need_audio:
+        combined_candidates: list[tuple[int, int, int, int, str]] = []
+        video_candidates: list[tuple[int, str, float]] = []
+        audio_candidates: list[tuple[int, int, int, str, float]] = []
+
+        for item in formats:
+            format_id = item.get("format_id")
+            if not format_id:
+                continue
+            fid_str = _text(format_id, limit=128)
+            size = _est_size(item)
+            has_v = _is_v(item)
+            has_a = _is_a(item)
+
+            if has_v and has_a:
+                if size is None or size <= max_bytes:
+                    quality = int(
+                        _finite_float(item.get("height")) or 0
+                    ) * 1_000_000 + int(_finite_float(item.get("tbr")) or 0)
+                    combined_candidates.append((*_audio_rank(item), -quality, fid_str))
+            elif has_v:
+                quality = int(_finite_float(item.get("height")) or 0) * 1_000_000 + int(
+                    _finite_float(item.get("tbr")) or 0
+                )
+                video_candidates.append((-quality, fid_str, size or 0.0))
+            elif has_a:
+                audio_candidates.append((*_audio_rank(item), fid_str, size or 0.0))
+
+        if combined_candidates:
+            combined_candidates.sort()
+            return combined_candidates[0][-1]
+
+        if video_candidates and audio_candidates:
+            video_candidates.sort()
+            audio_candidates.sort()
+            for _vq, v_id, v_sz in video_candidates:
+                for *_, a_id, a_sz in audio_candidates:
+                    if (v_sz + a_sz) <= max_bytes or max_bytes <= 0:
+                        return f"{v_id}+{a_id}"
+            return f"{video_candidates[0][1]}+{audio_candidates[0][-2]}"
+
+        raise _failure(
+            "MEDIA_DECODE_FAILED",
+            "no inspected media format satisfies the requested streams and download limit",
+            stage="acquire_media",
+        )
+
+    candidates: list[tuple[Any, ...]] = []
+    for item in formats:
+        format_id = item.get("format_id")
+        if not format_id:
             continue
-        video = str(item.get("vcodec", "")).lower() not in {"", "none"}
-        audio = str(item.get("acodec", "")).lower() not in {"", "none"}
-        if need_video and not video:
+        size = _est_size(item)
+        if size is not None and max_bytes > 0 and size > max_bytes:
             continue
-        if need_audio and not audio:
+        has_v = _is_v(item)
+        has_a = _is_a(item)
+        if need_video and not has_v:
+            continue
+        if need_audio and not has_a:
             continue
         quality = int(_finite_float(item.get("height")) or 0) * 1_000_000 + int(
             _finite_float(item.get("tbr")) or 0
         )
-        stream_rank = 0 if video and audio else 1
-        candidates.append((stream_rank, -quality, _text(format_id, limit=128)))
+        stream_rank = 0 if (has_v and has_a) else 1
+        if need_audio:
+            candidates.append(
+                (*_audio_rank(item), stream_rank, -quality, _text(format_id, limit=128))
+            )
+        else:
+            candidates.append((stream_rank, -quality, _text(format_id, limit=128)))
+
     if not candidates:
         raise _failure(
             "MEDIA_DECODE_FAILED",
@@ -1490,7 +1649,7 @@ def _format_choice(
             stage="acquire_media",
         )
     candidates.sort()
-    return candidates[0][2]
+    return str(candidates[0][-1])
 
 
 def _artifact_from_store(store: Any, path: Path, *, metadata: Mapping[str, Any]) -> Any:
@@ -1671,7 +1830,17 @@ class MediaAcquirer:
             _text(getattr(task, "value", task)).lower()
             for task in (raw_tasks if isinstance(raw_tasks, Iterable) else (raw_tasks,))
         }
-        has_captions = bool(_mapping_value(inspection, "caption_tracks", ()))
+        source = str(getattr(inspection, "source", "") or "")
+        is_youtube = bool(
+            _transcript_video_id(source)
+            or "youtube.com" in source.lower()
+            or "youtu.be" in source.lower()
+        )
+        has_captions = (
+            False
+            if is_youtube
+            else bool(_mapping_value(inspection, "caption_tracks", ()))
+        )
         format_id = _format_choice(
             inspection.formats,
             max_bytes,
@@ -1679,6 +1848,7 @@ class MediaAcquirer:
             need_audio=bool({"vad"} & task_names)
             or ("transcript" in task_names and not has_captions),
             window_seconds=end - start,
+            language=_mapping_value(request, "language", "en"),
         )
         output_template = str(staging / "media.%(ext)s")
         downloaded: list[Path] = []
@@ -1728,6 +1898,17 @@ class MediaAcquirer:
             "socket_timeout": timeout_seconds,
             "logger": _MuffledLogger(),
         }
+        node_bin = shutil.which("node")
+        if node_bin:
+            options["js_runtimes"] = {"node": {"path": node_bin}}
+        cookies_file = _settings_value(self.settings, "cookies_file", None)
+        if not cookies_file:
+            with contextlib.suppress(Exception):
+                from ..settings import get_settings
+
+                cookies_file = getattr(get_settings(), "cookies_file", None)
+        if cookies_file and Path(cookies_file).is_file():
+            options["cookiefile"] = str(cookies_file)
         # yt-dlp's Python API uses ``download_ranges`` for section-bounded
         # downloads.  Keep the textual option as a compatibility hint for
         # injected downloaders that inspect options without importing yt-dlp.

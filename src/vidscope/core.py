@@ -295,7 +295,7 @@ def _vtt(rows: list[dict[str, Any]]) -> str:
         hours = int(total // 3600)
         minutes = int((total % 3600) // 60)
         remainder = total % 60
-        return f"{hours:02d}:{minutes:02d}:{remainder:06.3f}".replace(".", ",")
+        return f"{hours:02d}:{minutes:02d}:{remainder:06.3f}"
 
     lines = ["WEBVTT", ""]
     for row in rows:
@@ -557,6 +557,16 @@ def _run_analysis(
                 rows = _segments(caption)
                 if not rows:
                     raise RuntimeError("caption transcript output was empty")
+                start = float(request.time_range.start_seconds)
+                end = float(request.time_range.end_seconds)
+                bounded_rows = [
+                    row
+                    for row in rows
+                    if float(row.get("end_seconds", row.get("end", 0.0))) > start
+                    and float(row.get("start_seconds", row.get("start", 0.0))) < end
+                ]
+                if bounded_rows:
+                    rows = bounded_rows
                 refs.append(
                     store.write_jsonl(
                         rows,
@@ -608,6 +618,43 @@ def _run_analysis(
                 rows = _segments(transcript)
                 if not rows:
                     raise RuntimeError("transcript artifact was empty")
+                offset = float(request.time_range.start_seconds)
+                if offset > 0:
+                    for row in rows:
+                        if "start_seconds" in row:
+                            row["start_seconds"] = round(
+                                float(row["start_seconds"]) + offset, 3
+                            )
+                        elif "start" in row:
+                            row["start_seconds"] = round(
+                                float(row.pop("start")) + offset, 3
+                            )
+                        if "end_seconds" in row:
+                            row["end_seconds"] = round(
+                                float(row["end_seconds"]) + offset, 3
+                            )
+                        elif "end" in row:
+                            row["end_seconds"] = round(
+                                float(row.pop("end")) + offset, 3
+                            )
+                        for word in row.get("words", []) or []:
+                            if isinstance(word, dict):
+                                if "start_seconds" in word:
+                                    word["start_seconds"] = round(
+                                        float(word["start_seconds"]) + offset, 3
+                                    )
+                                elif "start" in word:
+                                    word["start_seconds"] = round(
+                                        float(word.pop("start")) + offset, 3
+                                    )
+                                if "end_seconds" in word:
+                                    word["end_seconds"] = round(
+                                        float(word["end_seconds"]) + offset, 3
+                                    )
+                                elif "end" in word:
+                                    word["end_seconds"] = round(
+                                        float(word.pop("end")) + offset, 3
+                                    )
                 refs.append(
                     store.write_jsonl(
                         rows,

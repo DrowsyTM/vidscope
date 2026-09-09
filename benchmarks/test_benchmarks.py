@@ -8,7 +8,7 @@ from vidscope.backends.source import (
     SourceInspection,
     _parse_caption_payload,
 )
-from vidscope.contracts import AnalyzeVideoRequest, TimeRange
+from vidscope.contracts import AnalysisTask, AnalyzeVideoRequest, TimeRange
 from vidscope.planner import Capabilities, build_execution_plan
 from vidscope.telemetry import compute_ocr_fps, compute_rtf, get_peak_rss_mb
 
@@ -17,7 +17,13 @@ def test_benchmark_dag_planning(benchmark: Any, tmp_path: Path) -> None:
     request = AnalyzeVideoRequest(
         source="https://example.com/video.mp4",
         time_range=TimeRange(start_seconds=0, end_seconds=60),
-        tasks={"metadata", "transcript", "vad", "frames", "ocr"},
+        tasks={
+            AnalysisTask.METADATA,
+            AnalysisTask.TRANSCRIPT,
+            AnalysisTask.VAD,
+            AnalysisTask.FRAMES,
+            AnalysisTask.OCR,
+        },
         output_directory=tmp_path,
         max_frames=6,
     )

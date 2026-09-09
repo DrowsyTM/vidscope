@@ -169,7 +169,6 @@ class FFmpegBackend:
             )
         command = [
             self.ffprobe_bin,
-            "-nostdin",
             "-protocol_whitelist",
             "file,pipe,crypto,data",
             "-v",
@@ -273,12 +272,12 @@ class FFmpegBackend:
         timestamps = timestamps_seconds or _field(
             request, "frame_timestamps_seconds", None
         )
+        time_range = _field(request, "time_range", None)
+        window_start = float(_field(time_range, "start_seconds", 0.0))
         if timestamps is None:
-            time_range = _field(request, "time_range", None)
-            start = float(_field(time_range, "start_seconds", 0.0))
             end = float(_field(time_range, "end_seconds", 180.0))
             timestamps = tuple(
-                start + (end - start) * i / (max_frames + 1)
+                window_start + (end - window_start) * i / (max_frames + 1)
                 for i in range(1, max_frames + 1)
             )
         timestamps = tuple(float(value) for value in timestamps)
@@ -298,6 +297,11 @@ class FFmpegBackend:
                     "frame timestamp is invalid",
                     stage="extract_frames",
                 )
+            seek_offset = (
+                max(0.0, timestamp - window_start)
+                if timestamp >= window_start
+                else timestamp
+            )
             output = work / f"frame-{index:04d}.jpg"
             command = [
                 self.ffmpeg_bin,
@@ -309,7 +313,7 @@ class FFmpegBackend:
                 "-loglevel",
                 "warning",
                 "-ss",
-                f"{timestamp:.6f}",
+                f"{seek_offset:.6f}",
                 "-i",
                 str(source),
                 "-frames:v",

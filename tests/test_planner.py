@@ -185,6 +185,31 @@ def test_caption_transcript_does_not_add_vad_without_an_asr_fallback(
     assert "extract_audio" not in stage_names
 
 
+def test_youtube_url_always_routes_to_asr_even_with_metadata_captions(
+    tmp_path: Path,
+) -> None:
+    request = make_request(tmp_path, {"transcript"}, asr_enabled=True)
+    inspection = SourceInspection(
+        source="https://www.youtube.com/watch?v=aircAruvnKk",
+        is_url=True,
+        duration_seconds=120.0,
+        caption_tracks=[make_caption("manual")],
+        formats=[{"format_id": "fixture", "ext": "mp4"}],
+        metadata={"title": "fixture"},
+    )
+    plan = build_execution_plan(request, inspection, make_capabilities())
+    stage_names = set(stages_by_name(plan))
+
+    assert {
+        "acquire_media",
+        "probe",
+        "extract_audio",
+        "vad",
+        "transcribe",
+    } <= stage_names
+    assert "captions" not in stage_names
+
+
 def test_ocr_adds_the_frame_dependency_and_no_unrequested_audio_branch(
     tmp_path: Path,
 ) -> None:
