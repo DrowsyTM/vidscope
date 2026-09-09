@@ -182,31 +182,28 @@ Add `vidscope` to `.cursor/mcp.json`:
 
 | Tool | Purpose | Mode | Typical Use Case |
 |---|---|---|---|
-| `get_video_info` | Fast preflight inspection | Sync (~500ms) | Inspect video title, duration, languages, chapters, and native caption availability. |
-| `analyze_video` | Single video analysis front door | Sync (<5s) / Async | Analyze video and extract condensed visual & speech timeline chunks. Short clips return complete timeline immediately; longer videos seamlessly hand off to background with `job_id` and ETA. |
-| `get_job_status` | Incremental streaming status | Instant | Check background job status and retrieve newly completed timeline chunks using `since_chunk` cursor to prevent token bloat. |
+| `get_video_info` | Fast preflight inspection | Sync (~500ms) | Inspect video title, duration, languages, chapters, and host runtime capabilities (`local_asr_available`, `local_ocr_available`). |
+| `analyze_video` | Single video analysis front door | Sync (<5s) / Async | Analyze video and extract condensed visual & speech timeline chunks with explicit `coverage` metadata. Short clips return complete timeline immediately; longer videos seamlessly hand off to background with `job_id`, ETA, and `next_action`. |
+| `get_job_status` | Incremental streaming status | Instant | Check background job status and retrieve newly completed timeline chunks using `since_chunk` cursor. Emits structured `next_action`, `retry_after_seconds`, and `coverage` metadata. |
 | `view_frame` | Multimodal frame delivery | Sync (~100ms–2s) | View any video frame directly in conversation context as a native MCP `Image` (`image/jpeg`) block with OCR metadata, via `frame_id` or `(source, timestamp)`. |
-| `search_video` | Fast caption & transcript grep | Sync (~1s) | Grep across native subtitles (`source`) or analyzed transcripts (`job_id`) with regex and case-sensitivity support. |
+| `search_video` | Post-analysis transcript grep | Sync (~100ms) | Grep across analyzed speech transcripts (`job_id`) with regex, case-sensitivity, and windowed `coverage` metadata. Strictly gated to completed jobs. |
 
 ### Recommended Agent Workflow
 
 ```mermaid
 flowchart TD
-    A["get_video_info(source)"] --> B{"Native captions present & specific query?"}
-    B -- Yes --> C["search_video(query, source=...)"]
-    B -- No / Need Full Analysis --> D["analyze_video(source)"]
-    C --> D
-    D --> E{"Finished in <=5s?"}
-    E -- Yes --> F["Timeline returned directly"]
-    E -- No --> G["get_job_status(job_id, since_chunk=...)"]
-    G --> F
-    F --> H{"Inspect specific keyframe visually?"}
-    H -- Yes --> I["view_frame(frame_id)"]
-    H -- No --> J["Answer User Query"]
-    I --> J
-    F --> K{"Grep speech transcript?"}
-    K -- Yes --> L["search_video(query, job_id=...)"]
-    L --> J
+    A["get_video_info(source)"] --> B["analyze_video(source)"]
+    B --> C{"Finished in <=5s?"}
+    C -- Yes --> D["Timeline returned directly"]
+    C -- No --> E["get_job_status(job_id, since_chunk=...)"]
+    E --> D
+    D --> F{"Inspect keyframe visually?"}
+    F -- Yes --> G["view_frame(frame_id)"]
+    F -- No --> H["Answer User Query"]
+    G --> H
+    D --> I{"Search spoken topics/keywords?"}
+    I -- Yes --> J["search_video(job_id, query)"]
+    J --> H
 ```
 
 ---
