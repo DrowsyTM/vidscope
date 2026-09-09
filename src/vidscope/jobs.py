@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import shutil
 import tempfile
 import threading
@@ -33,6 +34,156 @@ def format_timestamp(seconds: float | None) -> str:
     if hours > 0:
         return f"{hours:d}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
+
+
+def _norm_word(w: Any) -> str:
+    return re.sub(r"[^\w]", "", str(w)).lower()
+
+
+def reconcile_transcript_segments(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+    *,
+    max_search_seconds: float = 6.0,
+    max_words_to_match: int = 30,
+) -> list[dict[str, Any]]:
+    """Reconcile and deduplicate transcript segments across adjacent chunk boundaries.
+
+    When multi-chunk analysis uses an audio overlap buffer to prevent cutting words in half,
+    the same words can be transcribed at the tail of the preceding chunk and the head of the
+    succeeding chunk. This function finds the longest matching sequence of normalized words
+    across the seam and removes duplicate tokens from the head of incoming segments without
+    truncating or losing unique words.
+    """
+    if not existing:
+        return [dict(s) for s in incoming]
+    if not incoming:
+        return [dict(s) for s in existing]
+
+    existing_result = [dict(s) for s in existing]
+    incoming_copy = [dict(s) for s in incoming]
+
+    last_end = float(
+        existing_result[-1].get("end_seconds", existing_result[-1].get("end", 0.0))
+    )
+
+    # Collect tail words from existing segments within max_search_seconds of last_end
+    tail_words: list[tuple[str, str, int, int]] = []
+    for s_idx, seg in enumerate(existing_result):
+        seg_end = float(seg.get("end_seconds", seg.get("end", 0.0)))
+        if seg_end >= last_end - max_search_seconds:
+            words = seg.get("words")
+            if words and isinstance(words, list):
+                for w_idx, w in enumerate(words):
+                    raw = str(w.get("word", ""))
+                    norm = _norm_word(raw)
+                    if norm:
+                        tail_words.append((raw, norm, s_idx, w_idx))
+            else:
+                for w_idx, raw in enumerate(str(seg.get("text", "")).split()):
+                    norm = _norm_word(raw)
+                    if norm:
+                        tail_words.append((raw, norm, s_idx, w_idx))
+
+    # Collect head words from incoming segments within max_search_seconds of first start
+    first_start = float(
+        incoming_copy[0].get("start_seconds", incoming_copy[0].get("start", 0.0))
+    )
+    head_words: list[tuple[str, str, int, int]] = []
+    for s_idx, seg in enumerate(incoming_copy):
+        seg_start = float(seg.get("start_seconds", seg.get("start", 0.0)))
+        if seg_start <= first_start + max_search_seconds:
+            words = seg.get("words")
+            if words and isinstance(words, list):
+                for w_idx, w in enumerate(words):
+                    raw = str(w.get("word", ""))
+                    norm = _norm_word(raw)
+                    if norm:
+                        head_words.append((raw, norm, s_idx, w_idx))
+            else:
+                for w_idx, raw in enumerate(str(seg.get("text", "")).split()):
+                    norm = _norm_word(raw)
+                    if norm:
+                        head_words.append((raw, norm, s_idx, w_idx))
+
+    # Find longest matching sequence of normalized words
+    max_k = min(len(tail_words), len(head_words), max_words_to_match)
+    matched_k = 0
+    for k in range(max_k, 0, -1):
+        t_seq = [tw[1] for tw in tail_words[-k:]]
+        h_seq = [hw[1] for hw in head_words[:k]]
+        if t_seq == h_seq:
+            matched_k = k
+            break
+
+    if matched_k > 0:
+        words_to_drop = matched_k
+        processed_incoming: list[dict[str, Any]] = []
+        for seg in incoming_copy:
+            seg_words = seg.get("words")
+            if seg_words and isinstance(seg_words, list):
+                n = len(seg_words)
+                if words_to_drop >= n:
+                    words_to_drop -= n
+                    continue
+                elif words_to_drop > 0:
+                    rem_words = seg_words[words_to_drop:]
+                    words_to_drop = 0
+                    seg["words"] = rem_words
+                    seg["text"] = " ".join(
+                        str(w.get("word", "")) for w in rem_words
+                    ).strip()
+                    first_w_start = rem_words[0].get(
+                        "start_seconds", rem_words[0].get("start")
+                    )
+                    if first_w_start is not None:
+                        seg["start_seconds"] = round(float(first_w_start), 2)
+                        if "formatted_time" in seg:
+                            seg["formatted_time"] = format_timestamp(
+                                float(seg["start_seconds"])
+                            )
+                    processed_incoming.append(seg)
+                else:
+                    processed_incoming.append(seg)
+            else:
+                raw_words = str(seg.get("text", "")).split()
+                n = len(raw_words)
+                if words_to_drop >= n:
+                    words_to_drop -= n
+                    continue
+                elif words_to_drop > 0:
+                    rem_words = raw_words[words_to_drop:]
+                    words_to_drop = 0
+                    seg["text"] = " ".join(rem_words).strip()
+                    seg["start_seconds"] = max(
+                        float(seg.get("start_seconds", 0.0)),
+                        last_end,
+                    )
+                    if "formatted_time" in seg:
+                        seg["formatted_time"] = format_timestamp(
+                            float(seg["start_seconds"])
+                        )
+                    processed_incoming.append(seg)
+                else:
+                    processed_incoming.append(seg)
+        incoming_copy = processed_incoming
+
+    # Clamp remaining fractional overlap to preserve monotonicity without text loss
+    if incoming_copy and existing_result:
+        inc_start = float(
+            incoming_copy[0].get("start_seconds", incoming_copy[0].get("start", 0.0))
+        )
+        ext_end = float(
+            existing_result[-1].get("end_seconds", existing_result[-1].get("end", 0.0))
+        )
+        if inc_start < ext_end:
+            incoming_copy[0]["start_seconds"] = round(ext_end, 2)
+            if "formatted_time" in incoming_copy[0]:
+                incoming_copy[0]["formatted_time"] = format_timestamp(
+                    float(incoming_copy[0]["start_seconds"])
+                )
+
+    return existing_result + incoming_copy
 
 
 @dataclass
@@ -315,12 +466,8 @@ class JobManager:
                 return
             job.available_sections.append(section)
             if transcript_segments:
-                job.full_transcript.extend(transcript_segments)
-                job.full_transcript.sort(
-                    key=lambda s: (
-                        float(s.get("start_seconds", s.get("start", 0.0))),
-                        float(s.get("end_seconds", s.get("end", 0.0))),
-                    )
+                job.full_transcript = reconcile_transcript_segments(
+                    job.full_transcript, transcript_segments
                 )
             job.completed_chunks = completed_chunks
             job.progress_percentage = (
@@ -412,4 +559,5 @@ __all__ = [
     "JobState",
     "format_timestamp",
     "global_job_manager",
+    "reconcile_transcript_segments",
 ]

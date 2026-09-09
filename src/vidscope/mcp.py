@@ -34,11 +34,17 @@ from .contracts import (
 )
 from .core import VideoAnalyzerFailure
 from .core import analyze_video as core_analyze_video
-from .jobs import format_timestamp, global_job_manager
+from .jobs import (
+    format_timestamp,
+    global_job_manager,
+    reconcile_transcript_segments,
+)
 from .logging import configure_logging
 from .settings import get_settings
 
 logger = logging.getLogger("vidscope.mcp")
+
+OVERLAP_BUFFER_SECONDS: float = 2.0
 
 mcp = FastMCP("vidscope")
 
@@ -260,6 +266,11 @@ def _process_job_chunks(
         )
 
         for index, (start_sec, end_sec) in enumerate(chunk_ranges, start=1):
+            req_end = (
+                min(end_sec + OVERLAP_BUFFER_SECONDS, resolved_end)
+                if index < len(chunk_ranges)
+                else end_sec
+            )
             with tempfile.TemporaryDirectory(
                 prefix=f"vidscope_job_{job_id}_{index}_"
             ) as temp_dir:
@@ -288,7 +299,7 @@ def _process_job_chunks(
                             source=source,
                             time_range=TimeRange(
                                 start_seconds=start_sec,
-                                end_seconds=end_sec,
+                                end_seconds=req_end,
                             ),
                             tasks=tasks,
                             max_frames=4,
@@ -326,22 +337,31 @@ def _process_job_chunks(
                         if line.strip():
                             try:
                                 seg = json.loads(line)
-                                transcript_segments.append(
-                                    {
-                                        "start_seconds": round(
-                                            float(seg["start_seconds"]), 2
-                                        ),
-                                        "end_seconds": round(
-                                            float(seg["end_seconds"]), 2
-                                        ),
-                                        "formatted_time": format_timestamp(
-                                            float(seg["start_seconds"])
-                                        ),
-                                        "text": str(seg.get("text") or "").strip(),
-                                    }
-                                )
+                                seg_dict: dict[str, Any] = {
+                                    "start_seconds": round(
+                                        float(seg["start_seconds"]), 2
+                                    ),
+                                    "end_seconds": round(float(seg["end_seconds"]), 2),
+                                    "formatted_time": format_timestamp(
+                                        float(seg["start_seconds"])
+                                    ),
+                                    "text": str(seg.get("text") or "").strip(),
+                                }
+                                if "words" in seg and seg["words"]:
+                                    seg_dict["words"] = seg["words"]
+                                transcript_segments.append(seg_dict)
                             except Exception:
                                 continue
+
+                # Reconcile transcript segments against previously accumulated transcript to eliminate
+                # duplicate overlap tokens at chunk boundaries before building keyframe dialogue and chunk summary
+                job = global_job_manager.get_job(job_id)
+                prev_transcript = job.full_transcript if job else []
+                if prev_transcript and transcript_segments:
+                    combined = reconcile_transcript_segments(
+                        prev_transcript, transcript_segments
+                    )
+                    transcript_segments = combined[len(prev_transcript) :]
 
                 frame_files = sorted(
                     f

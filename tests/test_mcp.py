@@ -1346,3 +1346,194 @@ def test_view_frame_missing_frame_returns_actionable_next_action() -> None:
     assert res.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
     assert res.structured_content["next_action"] == "analyze_video"
     assert res.structured_content["retry_after_seconds"] == 0
+
+
+def test_reconcile_transcript_segments_word_level_timestamps() -> None:
+    from vidscope.jobs import reconcile_transcript_segments
+
+    existing = [
+        {
+            "start_seconds": 170.0,
+            "end_seconds": 178.0,
+            "text": "let's prepare",
+            "words": [
+                {"word": "let's", "start_seconds": 170.0, "end_seconds": 174.0},
+                {"word": "prepare", "start_seconds": 174.0, "end_seconds": 178.0},
+            ],
+        },
+        {
+            "start_seconds": 178.0,
+            "end_seconds": 181.5,
+            "text": "for the next section",
+            "words": [
+                {"word": "for", "start_seconds": 178.0, "end_seconds": 178.8},
+                {"word": "the", "start_seconds": 178.8, "end_seconds": 179.4},
+                {"word": "next", "start_seconds": 179.4, "end_seconds": 180.2},
+                {"word": "section", "start_seconds": 180.2, "end_seconds": 181.5},
+            ],
+        },
+    ]
+
+    incoming = [
+        {
+            "start_seconds": 179.0,
+            "end_seconds": 183.0,
+            "text": "the next section where we",
+            "words": [
+                {"word": "the", "start_seconds": 179.0, "end_seconds": 179.5},
+                {"word": "next", "start_seconds": 179.5, "end_seconds": 180.3},
+                {"word": "section", "start_seconds": 180.3, "end_seconds": 181.4},
+                {"word": "where", "start_seconds": 181.6, "end_seconds": 182.2},
+                {"word": "we", "start_seconds": 182.2, "end_seconds": 183.0},
+            ],
+        },
+        {
+            "start_seconds": 183.1,
+            "end_seconds": 186.0,
+            "text": "dive into details",
+            "words": [
+                {"word": "dive", "start_seconds": 183.1, "end_seconds": 184.0},
+                {"word": "into", "start_seconds": 184.0, "end_seconds": 185.0},
+                {"word": "details", "start_seconds": 185.0, "end_seconds": 186.0},
+            ],
+        },
+    ]
+
+    result = reconcile_transcript_segments(existing, incoming)
+    # Total segments: 2 existing + 2 incoming (first incoming segment modified)
+    assert len(result) == 4
+    # Check the modified incoming segment
+    modified = result[2]
+    assert modified["text"] == "where we"
+    assert modified["start_seconds"] == 181.6
+    assert len(modified["words"]) == 2
+    assert modified["words"][0]["word"] == "where"
+    # Check the second incoming segment is untouched
+    assert result[3]["text"] == "dive into details"
+
+
+def test_reconcile_transcript_segments_text_only() -> None:
+    from vidscope.jobs import reconcile_transcript_segments
+
+    existing = [
+        {"start_seconds": 175.0, "end_seconds": 181.2, "text": "we discuss attention"}
+    ]
+    incoming = [
+        {
+            "start_seconds": 180.0,
+            "end_seconds": 185.0,
+            "text": "attention and transformers",
+        }
+    ]
+
+    result = reconcile_transcript_segments(existing, incoming)
+    assert len(result) == 2
+    assert result[0]["text"] == "we discuss attention"
+    assert result[1]["text"] == "and transformers"
+    assert result[1]["start_seconds"] == 181.2
+
+
+def test_reconcile_transcript_segments_entire_segment_consumed() -> None:
+    from vidscope.jobs import reconcile_transcript_segments
+
+    existing = [
+        {"start_seconds": 175.0, "end_seconds": 181.0, "text": "we discuss attention"}
+    ]
+    incoming = [
+        {"start_seconds": 178.0, "end_seconds": 181.0, "text": "discuss attention"},
+        {
+            "start_seconds": 181.5,
+            "end_seconds": 186.0,
+            "text": "mechanisms in depth",
+        },
+    ]
+
+    result = reconcile_transcript_segments(existing, incoming)
+    assert len(result) == 2
+    assert result[0]["text"] == "we discuss attention"
+    assert result[1]["text"] == "mechanisms in depth"
+    assert result[1]["start_seconds"] == 181.5
+
+
+def test_reconcile_transcript_segments_no_overlap() -> None:
+    from vidscope.jobs import reconcile_transcript_segments
+
+    existing = [
+        {"start_seconds": 0.0, "end_seconds": 10.0, "text": "first segment text"}
+    ]
+    incoming = [
+        {"start_seconds": 12.0, "end_seconds": 20.0, "text": "second segment text"}
+    ]
+
+    result = reconcile_transcript_segments(existing, incoming)
+    assert len(result) == 2
+    assert result[0]["text"] == "first segment text"
+    assert result[1]["text"] == "second segment text"
+    assert result[1]["start_seconds"] == 12.0
+
+
+def test_reconcile_transcript_segments_timestamp_overlap_no_word_match() -> None:
+    from vidscope.jobs import reconcile_transcript_segments
+
+    existing = [
+        {"start_seconds": 0.0, "end_seconds": 10.5, "text": "first segment text"}
+    ]
+    incoming = [
+        {"start_seconds": 10.0, "end_seconds": 20.0, "text": "totally different words"}
+    ]
+
+    result = reconcile_transcript_segments(existing, incoming)
+    assert len(result) == 2
+    assert result[0]["text"] == "first segment text"
+    # No words dropped since tokens didn't match, but start_seconds clamped to last end
+    assert result[1]["text"] == "totally different words"
+    assert result[1]["start_seconds"] == 10.5
+
+
+def test_job_multi_chunk_transcript_reconciliation() -> None:
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import OVERLAP_BUFFER_SECONDS, get_transcript
+
+    assert OVERLAP_BUFFER_SECONDS == 2.0
+
+    job = global_job_manager.create_job(
+        "overlap_test.mp4", [(0.0, 180.0), (180.0, 360.0)]
+    )
+
+    # Chunk 1 (with audio buffer up to 182.0s)
+    chunk1_segments = [
+        {
+            "start_seconds": 176.0,
+            "end_seconds": 181.8,
+            "text": "we wrap up neural networks",
+        }
+    ]
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "summary": "chunk 1 summary"},
+        completed_chunks=1,
+        transcript_segments=chunk1_segments,
+    )
+
+    # Chunk 2 (starts at 180.0s, picks up duplicate words)
+    chunk2_segments = [
+        {
+            "start_seconds": 180.0,
+            "end_seconds": 184.0,
+            "text": "neural networks and begin transformers",
+        }
+    ]
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 2, "summary": "chunk 2 summary"},
+        completed_chunks=2,
+        transcript_segments=chunk2_segments,
+    )
+    global_job_manager.complete_job(job.job_id)
+
+    res = get_transcript(job_id=job.job_id)
+    assert isinstance(res, dict)
+    assert res["segments_count"] == 2
+    assert res["segments"][0]["text"] == "we wrap up neural networks"
+    assert res["segments"][1]["text"] == "and begin transformers"
+    assert res["text"] == "we wrap up neural networks and begin transformers"
