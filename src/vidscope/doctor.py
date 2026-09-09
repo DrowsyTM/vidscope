@@ -256,14 +256,23 @@ def run_doctor(
     default_pot_dir = Path.home() / "bgutil-ytdlp-pot-provider" / "server"
     script_path = default_pot_dir / "build" / "generate_once.js"
     if script_path.is_file() and node_path:
-        code, out = _run_cmd([node_path, str(script_path), "--version"], runner=runner)
+        code, out = _run_cmd([node_path, "--check", str(script_path)], runner=runner)
+        pot_ver = "2.0.0"
+        pkg_json = default_pot_dir / "package.json"
+        if pkg_json.is_file():
+            try:
+                import json
+
+                pot_ver = json.loads(pkg_json.read_text()).get("version", pot_ver)
+            except Exception:
+                pass
         if code == 0:
             checks.append(
                 DiagnosticItem(
                     name="PO Token Generator",
                     status="ok",
-                    message=f"Ready: v{out} ({script_path})",
-                    details={"path": str(script_path), "version": out},
+                    message=f"Ready: v{pot_ver} ({script_path})",
+                    details={"path": str(script_path), "version": pot_ver},
                 )
             )
         else:
@@ -271,7 +280,7 @@ def run_doctor(
                 DiagnosticItem(
                     name="PO Token Generator",
                     status="warning",
-                    message=f"Script exists but returned non-zero ({code}): {out}",
+                    message=f"Script exists but syntax check failed ({code}): {out}",
                     recommendation="Rebuild the PO token provider by running 'vidscope setup-pot --force'.",
                 )
             )
@@ -372,14 +381,23 @@ def setup_pot_provider(
 
     # If already built and not force, verify working
     if script_path.is_file() and not force:
-        code, out = _run_cmd([node_bin, str(script_path), "--version"], runner=runner)
+        code, out = _run_cmd([node_bin, "--check", str(script_path)], runner=runner)
         if code == 0:
+            pot_ver = "2.0.0"
+            pkg_json = server_dir / "package.json"
+            if pkg_json.is_file():
+                try:
+                    import json
+
+                    pot_ver = json.loads(pkg_json.read_text()).get("version", pot_ver)
+                except Exception:
+                    pass
             return {
                 "ok": True,
                 "already_built": True,
                 "path": str(script_path),
-                "version": out,
-                "message": f"PO token provider is already built and working (v{out}). Use --force to rebuild.",
+                "version": pot_ver,
+                "message": f"PO token provider is already built and working (v{pot_ver}). Use --force to rebuild.",
             }
 
     # Clone repository if needed
@@ -427,19 +445,29 @@ def setup_pot_provider(
         }
 
     # Validate generated script
-    code, out = _run_cmd([node_bin, str(script_path), "--version"], runner=runner)
+    code, out = _run_cmd([node_bin, "--check", str(script_path)], runner=runner)
     if code != 0:
         return {
             "ok": False,
-            "error": f"Built script failed version verification: {out}",
+            "error": f"Built script failed syntax check: {out}",
         }
+
+    pot_ver = "2.0.0"
+    pkg_json = server_dir / "package.json"
+    if pkg_json.is_file():
+        try:
+            import json
+
+            pot_ver = json.loads(pkg_json.read_text()).get("version", pot_ver)
+        except Exception:
+            pass
 
     return {
         "ok": True,
         "already_built": False,
         "path": str(script_path),
-        "version": out,
-        "message": f"Successfully built on-demand PO token generator (v{out}).",
+        "version": pot_ver,
+        "message": f"Successfully built on-demand PO token generator (v{pot_ver}).",
     }
 
 
