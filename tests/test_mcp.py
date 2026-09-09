@@ -257,6 +257,12 @@ def test_get_video_info_returns_metadata_structure(
     assert result["formatted_duration"] == "02:00"
     assert result["has_captions"] is True
     assert result["languages"] == ["en"]
+    assert "capabilities" in result
+    assert "local_asr_available" in result["capabilities"]
+    assert "local_ocr_available" in result["capabilities"]
+    assert "caption_tracks_listed" in result
+    assert len(result["caption_tracks_listed"]) == 1
+    assert result["caption_tracks_listed"][0]["language"] == "en"
     assert len(result["chapters"]) == 2
     assert result["chapters"][0]["title"] == "Intro"
 
@@ -529,6 +535,8 @@ def test_analyze_video_async_fallback_and_get_job_status_streaming(
     assert res["status"] == "processing"
     job_id = res["job_id"]
     assert res["total_chunks"] == 2
+    assert res["next_since_chunk"] == 0
+    assert res["has_more"] is True
     assert "estimated_completion_seconds" in res
 
     # Wait for completion
@@ -714,6 +722,9 @@ def test_server_info_static_resource() -> None:
     assert payload["name"] == "vidscope"
     assert "3.4.7" in payload["version"]
     assert "analyze_video" in payload["tools"]
+    assert "capabilities" in payload
+    assert "local_asr_available" in payload["capabilities"]
+    assert "local_ocr_available" in payload["capabilities"]
     assert len(payload["resource_templates"]) >= 3
 
     # FastMCP list_resources returns server_info
@@ -935,3 +946,61 @@ def test_mcp_prompt_registration_and_discovery() -> None:
         names = [_field(p, "name") for p in prompts]
         assert "analyze_video_workflow" in names
         assert "search_video_workflow" in names
+
+
+@pytest.mark.anyio
+async def test_mcp_call_tool_validation_error_normalized_by_middleware() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.mcp import mcp
+
+    # start_seconds < 0 fails FastMCP / Pydantic schema validation
+    res = await mcp.call_tool(
+        "analyze_video", {"source": "test.mp4", "start_seconds": -5.0}
+    )
+    assert isinstance(res, ToolResult)
+    assert res.is_error is True
+    assert res.structured_content is not None
+    assert res.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert res.structured_content["stage"] == "analyze_video"
+    assert res.structured_content["retryable"] is False
+    assert "start_seconds" in res.structured_content["message"]
+
+    # chunk_duration_seconds > 180 fails FastMCP / Pydantic schema validation
+    res2 = await mcp.call_tool(
+        "analyze_video", {"source": "test.mp4", "chunk_duration_seconds": 250.0}
+    )
+    assert isinstance(res2, ToolResult)
+    assert res2.is_error is True
+    assert res2.structured_content is not None
+    assert res2.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert "chunk_duration_seconds" in res2.structured_content["message"]
+
+
+def test_eta_smoothing_stability() -> None:
+    import time
+
+    from vidscope.jobs import JobState
+
+    now = time.time()
+    job = JobState(
+        job_id="job_eta_test",
+        source="test.mp4",
+        status="processing",
+        created_at=now - 30.0,
+        updated_at=now - 15.0,
+        progress_percentage=20.0,
+        completed_chunks=1,
+        total_chunks=5,
+        chunks=[{"start_seconds": 0.0, "end_seconds": 30.0}],
+        chunk_durations=[15.0],
+        last_completed_at=now - 15.0,
+        last_estimated_remaining=60.0,
+    )
+
+    d1 = job.to_dict()
+    rem1 = d1["estimated_remaining_seconds"]
+    assert rem1 > 0
+    # Remaining ETA should not spike wildly upwards from 60s
+    assert rem1 <= 60.0 * 1.15

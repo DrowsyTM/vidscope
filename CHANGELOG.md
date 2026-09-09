@@ -37,13 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensured terminal job failures in `get_job_status` and `analyze_video` emit standard `is_error=True` ToolResult envelopes.
 - Added explicit mutual exclusivity validation and schema constraints (`Field`) in `view_frame` and `search_video`.
 - Enforced schema-level `oneOf` mutual exclusivity on `view_frame` and `search_video` tool parameters.
-- Added explicit cursor pagination (`next_since_chunk`), continuation flag (`has_more`), and actionable polling progress messages to `get_job_status`.
+- Added explicit cursor pagination (`next_since_chunk`), continuation flag (`has_more`), and actionable polling progress messages to `get_job_status`, and unified the cursor contract by including `next_since_chunk` and `has_more` in `analyze_video` initial processing and completion responses.
+- Normalized FastMCP and Pydantic argument validation errors into Vidscope's typed `ToolResult(is_error=True, structured_content=...)` error envelope via `ErrorNormalizationMiddleware`.
+- Stabilized dynamic ETA calculation in `JobState` using finished chunk duration averages, in-flight latency subtraction, and smoothing to eliminate erratic upward spikes.
+- Exposed host runtime capabilities (`local_asr_available`, `local_ocr_available`) and structured `caption_tracks_listed` in `get_video_info` and `vidscope://info` to clarify preflight environment state before long analyses.
+- Added explicit `"mode": "speech_and_visual" | "visual_only"` section tags and enriched visual-only summaries with on-screen OCR text or explicit host binary unavailability notes.
 - Replaced static job completion estimates with dynamic remaining time estimation based on rolling chunk execution latency.
 - Added natural language normalization (`english` -> `en`) and ISO format validation in `search_video`.
 - Added `ocr_status` tracking on keyframes and informative chunk summaries detailing when OCR is disabled due to missing host binary.
 - Registered standard MCP workflow prompts (`analyze_video_workflow`, `search_video_workflow`) for agent prompt discovery.
 - Registered static `vidscope://info` resource for discovery via standard `resources/list` protocol calls.
-- Suppressed verbose FastMCP stderr startup banner on server launch.
+- Suppressed FastMCP stderr startup banner and transport info logs by configuring log level to `WARNING` during stdio server launch.
 - Added `language` parameter and available language hints to `search_video`, distinguishing between unlisted tracks and remote provider retrieval failures (e.g. HTTP 429).
 - Fixed `ffprobe` execution failures by removing the unsupported `-nostdin` argument in `backends/media.py` and `backends/source.py`.
 - Corrected frame extraction seek offset math for nonzero start offsets in `backends/media.py`.

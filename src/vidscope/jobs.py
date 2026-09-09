@@ -56,17 +56,41 @@ class JobState:
     work_dir: Path | None = None
     completed_event: threading.Event = field(default_factory=threading.Event)
     job_key: str | None = None
+    last_completed_at: float = 0.0
+    last_estimated_remaining: float = 0.0
+    chunk_durations: list[float] = field(default_factory=list)
 
     def to_dict(self, since_chunk: int = 0) -> dict[str, Any]:
         now = time.time()
         elapsed = now - self.created_at
         if self.status == "processing":
-            if self.completed_chunks > 0 and self.total_chunks > self.completed_chunks:
-                avg_chunk_duration = elapsed / self.completed_chunks
+            if self.total_chunks > self.completed_chunks:
                 remaining_chunks = self.total_chunks - self.completed_chunks
-                remaining = max(1.0, remaining_chunks * avg_chunk_duration)
+                if self.chunk_durations:
+                    avg_chunk_dur = sum(self.chunk_durations) / len(
+                        self.chunk_durations
+                    )
+                    in_flight_spent = max(
+                        0.0, now - (self.last_completed_at or self.created_at)
+                    )
+                    current_chunk_remaining = max(0.5, avg_chunk_dur - in_flight_spent)
+                    raw_remaining = (
+                        current_chunk_remaining
+                        + max(0, remaining_chunks - 1) * avg_chunk_dur
+                    )
+                else:
+                    raw_remaining = max(1.0, self.estimated_total_seconds - elapsed)
+
+                if self.last_estimated_remaining > 0.0:
+                    remaining = min(
+                        self.last_estimated_remaining * 1.15,
+                        0.7 * self.last_estimated_remaining + 0.3 * raw_remaining,
+                    )
+                else:
+                    remaining = raw_remaining
+                self.last_estimated_remaining = remaining
             else:
-                remaining = max(0.0, self.estimated_total_seconds - elapsed)
+                remaining = 1.0
         else:
             remaining = 0.0
 
@@ -220,7 +244,13 @@ class JobManager:
                 if job.total_chunks > 0
                 else 100.0
             )
-            job.updated_at = time.time()
+            now = time.time()
+            prev_time = (
+                job.last_completed_at if job.last_completed_at > 0.0 else job.created_at
+            )
+            job.chunk_durations.append(max(0.5, now - prev_time))
+            job.last_completed_at = now
+            job.updated_at = now
 
     def complete_job(self, job_id: str) -> None:
         with self._lock:

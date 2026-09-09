@@ -12,9 +12,12 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
+from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.base import ToolResult
 from fastmcp.utilities.types import Image
-from pydantic import Field, ValidationError
+from pydantic import Field
+from pydantic import ValidationError as PydanticValidationError
 
 from .artifacts import ArtifactStore, ArtifactStoreFailure, read_artifact_resource
 from .backends.ocr import TesseractBackend
@@ -40,6 +43,78 @@ from .settings import get_settings
 logger = logging.getLogger("vidscope.mcp")
 
 mcp = FastMCP("vidscope")
+
+
+class ErrorNormalizationMiddleware(Middleware):
+    """Normalize FastMCP and Pydantic argument validation errors into Vidscope ToolResult envelopes."""
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[Any],
+        call_next: CallNext[Any, Any],
+    ) -> Any:
+        try:
+            return await call_next(context)
+        except (FastMCPValidationError, PydanticValidationError) as exc:
+            tool_name = (
+                getattr(context.message, "name", "unknown")
+                if hasattr(context, "message")
+                else "unknown"
+            )
+            cause = getattr(exc, "__cause__", None)
+            if isinstance(cause, PydanticValidationError):
+                err_msgs = [
+                    f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+                    for err in cause.errors(include_url=False)
+                ]
+                msg = "; ".join(err_msgs)
+            elif isinstance(exc, PydanticValidationError):
+                err_msgs = [
+                    f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+                    for err in exc.errors(include_url=False)
+                ]
+                msg = "; ".join(err_msgs)
+            else:
+                msg = str(exc).splitlines()[0]
+
+            error = AnalysisError(
+                code=ErrorCode.INVALID_REQUEST,
+                stage=tool_name,
+                message=msg[:2_048] or "argument validation failed",
+                retryable=False,
+            )
+            payload = _error_payload(error)
+            return ToolResult(
+                content=payload,
+                structured_content=payload,
+                is_error=True,
+            )
+
+
+mcp.add_middleware(ErrorNormalizationMiddleware())
+
+
+def _get_host_capabilities() -> dict[str, bool]:
+    has_tesseract = bool(shutil.which("tesseract"))
+    has_faster_whisper = False
+    has_silero_vad = False
+    try:
+        import faster_whisper  # noqa: F401
+
+        has_faster_whisper = True
+    except (ImportError, ModuleNotFoundError):
+        pass
+    try:
+        import silero_vad  # noqa: F401
+
+        has_silero_vad = True
+    except (ImportError, ModuleNotFoundError):
+        pass
+    return {
+        "local_asr_available": has_faster_whisper and has_silero_vad,
+        "local_ocr_available": has_tesseract,
+    }
+
 
 _COMMON_LANGUAGE_NAMES: dict[str, str] = {
     "english": "en",
@@ -131,6 +206,16 @@ def get_video_info(source: str) -> dict[str, Any] | ToolResult:
             or (Path(source).name if not inspection.is_url else source)
         )
 
+        capabilities = _get_host_capabilities()
+        caption_tracks_listed = [
+            {
+                "language": track.language,
+                "kind": track.kind,
+                "provider": track.provider,
+            }
+            for track in inspection.caption_tracks
+        ]
+
         return {
             "source": inspection.source,
             "title": title,
@@ -142,6 +227,8 @@ def get_video_info(source: str) -> dict[str, Any] | ToolResult:
             ),
             "has_captions": len(inspection.caption_tracks) > 0,
             "languages": sorted(languages),
+            "caption_tracks_listed": caption_tracks_listed,
+            "capabilities": capabilities,
             "chapters": chapters,
         }
     except VideoAnalyzerFailure as exc:
@@ -150,7 +237,7 @@ def get_video_info(source: str) -> dict[str, Any] | ToolResult:
     except SourceBackendFailure as exc:
         payload = _error_payload(exc.error)
         return ToolResult(content=payload, structured_content=payload, is_error=True)
-    except (ValidationError, ValueError, TypeError) as exc:
+    except (PydanticValidationError, ValueError, TypeError) as exc:
         error = AnalysisError(
             code=ErrorCode.INVALID_REQUEST,
             stage="validate_source",
@@ -361,20 +448,31 @@ def _process_job_chunks(
                 if full_transcript:
                     summary_text = full_transcript[:4_000]
                 else:
-                    ocr_note = (
-                        "OCR analyzed (no on-screen text detected)"
-                        if has_tesseract
-                        else "OCR unavailable (tesseract binary not installed on host)"
-                    )
+                    detected_texts = [
+                        f"[{kf['formatted_time']}] {kf['ocr_text']}"
+                        for kf in keyframes
+                        if kf.get("ocr_text")
+                    ]
+                    if detected_texts:
+                        ocr_summary = "On-screen text detected: " + "; ".join(
+                            detected_texts[:5]
+                        )
+                    elif has_tesseract:
+                        ocr_summary = "OCR analyzed (no on-screen text detected)."
+                    else:
+                        ocr_summary = (
+                            "OCR unavailable (tesseract binary not installed on host)."
+                        )
                     summary_text = (
                         f"Visual keyframes extracted ({len(keyframes)} frames between "
                         f"{format_timestamp(start_sec)} and {format_timestamp(end_sec)}). "
-                        f"Speech transcript unavailable for this chunk. {ocr_note}. "
+                        f"Speech transcript unavailable for this chunk. {ocr_summary} "
                         "Call view_frame(frame_id) to inspect frames."
                     )
 
                 section = {
                     "chunk_index": index,
+                    "mode": "speech_and_visual" if full_transcript else "visual_only",
                     "start_seconds": round(start_sec, 2),
                     "end_seconds": round(end_sec, 2),
                     "formatted_range": (
@@ -504,6 +602,9 @@ def analyze_video(
                 "start_seconds": start_seconds,
                 "end_seconds": resolved_end,
                 "total_chunks": job.total_chunks,
+                "completed_chunks": job.completed_chunks,
+                "next_since_chunk": len(job.available_sections),
+                "has_more": False,
                 "timeline": job.available_sections,
                 "hint": "Call view_frame(frame_id='<frame_id>') to inspect any keyframe image directly in conversation context.",
             }
@@ -532,11 +633,13 @@ def analyze_video(
             "end_seconds": processing_end,
             "total_chunks": job.total_chunks,
             "completed_chunks": job.completed_chunks,
+            "next_since_chunk": len(job.available_sections),
+            "has_more": True,
             "estimated_completion_seconds": round(job.estimated_total_seconds, 1),
             "initial_timeline": job.available_sections,
             "message": (
                 f"Analysis is processing in the background (estimated ~{int(job.estimated_total_seconds)}s). "
-                f"Call get_job_status(job_id='{job.job_id}') to check progress and retrieve timeline sections."
+                f"Call get_job_status(job_id='{job.job_id}', since_chunk={len(job.available_sections)}) to check progress and retrieve timeline sections."
             ),
         }
     except (VideoAnalyzerFailure, SourceBackendFailure) as exc:
@@ -1159,11 +1262,13 @@ def search_video_workflow(source: str, query: str) -> str:
 @mcp.resource("vidscope://info", name="server_info")
 def _server_info_resource() -> str:
     """Server capabilities, active version, and available resource URI templates."""
+    capabilities = _get_host_capabilities()
     return json.dumps(
         {
             "name": "vidscope",
             "version": "3.4.7",
             "description": "Video understanding and visual intelligence MCP server",
+            "capabilities": capabilities,
             "tools": [
                 "get_video_info",
                 "analyze_video",
@@ -1223,7 +1328,8 @@ _configure_tool_schemas()
 
 def main() -> None:
     configure_logging()
-    mcp.run(show_banner=False)
+    logging.getLogger("fastmcp").setLevel(logging.WARNING)
+    mcp.run(show_banner=False, log_level="WARNING")
 
 
 __all__ = [
