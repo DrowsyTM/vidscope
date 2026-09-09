@@ -113,6 +113,33 @@ pip install 'vidscope[vad]'
 pip install 'vidscope[all]'
 ```
 
+### System Diagnostics (`vidscope doctor`)
+Verify that your local system has required media binaries, speech models, and token providers:
+```bash
+vidscope doctor
+```
+Outputs an actionable diagnostic checklist:
+```text
+Vidscope System Diagnostics
+===========================
+[✓] FFmpeg: ffmpeg version 6.1.1
+[✓] FFprobe: ffprobe version 6.1.1
+[✓] Tesseract OCR: tesseract 5.3.4
+[✓] Speech-to-Text (ASR): faster-whisper + silero-vad ready [CPU (int8 quantized)]
+[✓] JavaScript Runtime: Node.js v22.22.2 (/usr/bin/node)
+[✓] PO Token Generator: Ready: v2.0.0 (~/bgutil-ytdlp-pot-provider/server/build/generate_once.js)
+[✓] Cookies File: Not configured (anonymous mode)
+
+System is fully configured and ready for video analysis.
+```
+
+### Optional: Proof-of-Origin (PO) Token Setup (`vidscope setup-pot`)
+If you run Vidscope on cloud or datacenter IPs (AWS, GCP, Hetzner) where YouTube blocks video stream formats, compile the on-demand PO token generation script with a single command:
+```bash
+vidscope setup-pot
+```
+This automatically clones and compiles the standalone script into `~/bgutil-ytdlp-pot-provider/server/build/generate_once.js`. `yt-dlp` will automatically invoke and cache tokens on demand without running any background Docker containers.
+
 ---
 
 ## FastMCP Configuration (Claude Desktop & Cursor)
@@ -143,6 +170,44 @@ Add `vidscope` to `.cursor/mcp.json`:
     }
   }
 }
+```
+
+---
+
+## FastMCP Tool Suite for AI Agents
+
+`vidscope` exposes an agent-optimized FastMCP interface designed for multimodal LLMs (Claude 3.5 Sonnet, Gemini, GPT-4o). Rather than dumping raw files to disk and requiring local filesystem access, tools return bounded, structured metadata and **native MCP `Image` content blocks (`image/jpeg`)** directly inline.
+
+### Available MCP Tools
+
+| Tool | Purpose | Mode | Typical Use Case |
+|---|---|---|---|
+| `get_video_info` | Fast preflight inspection | Sync (~500ms) | Inspect video title, duration, languages, chapters, and host runtime capabilities (`local_asr_available`, `local_ocr_available`). |
+| `analyze_video` | Single video analysis front door | Sync (<5s) / Async | Analyze video and extract condensed visual & speech timeline chunks with explicit `coverage` metadata. Short clips return complete timeline immediately; longer videos seamlessly hand off to background with `job_id`, ETA, and `next_action`. |
+| `get_job_status` | Incremental streaming status | Instant | Check background job status and retrieve newly completed timeline chunks using `since_chunk` cursor. Emits structured `next_action`, `retry_after_seconds`, and `coverage` metadata. |
+| `view_frame` | Multimodal frame delivery | Sync (~100ms–2s) | View any video frame directly in conversation context as a native MCP `Image` (`image/jpeg`) block with OCR metadata, via `frame_id` or `(source, timestamp)`. |
+| `search_video` | Post-analysis transcript grep | Sync (~100ms) | Grep across analyzed speech transcripts (`job_id`) with regex, case-sensitivity, and windowed `coverage` metadata. Strictly gated to completed jobs. |
+| `get_transcript` | Targeted dialogue retrieval | Sync (~50ms) | Retrieve timestamped dialogue segments and joined text for a specific time window (`start_seconds`, `end_seconds`, `max_duration_seconds`). Strictly gated to completed jobs. |
+
+### Recommended Agent Workflow
+
+```mermaid
+flowchart TD
+    A["get_video_info(source)"] --> B["analyze_video(source)"]
+    B --> C{"Finished in <=5s?"}
+    C -- Yes --> D["Timeline returned directly"]
+    C -- No --> E["get_job_status(job_id, since_chunk=...)"]
+    E --> D
+    D --> F{"Inspect keyframe visually?"}
+    F -- Yes --> G["view_frame(frame_id)"]
+    F -- No --> H["Answer User Query"]
+    G --> H
+    D --> I{"Search spoken topics/keywords?"}
+    I -- Yes --> J["search_video(job_id, query)"]
+    J --> H
+    D --> K{"Read verbatim dialogue?"}
+    K -- Yes --> L["get_transcript(job_id, start_seconds, end_seconds)"]
+    L --> H
 ```
 
 ---

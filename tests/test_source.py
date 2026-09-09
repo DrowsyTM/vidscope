@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -230,3 +231,139 @@ def test_ssrf_rejection_for_private_and_loopback_ips(forbidden_url: str) -> None
     with pytest.raises(SourceBackendFailure) as exc_info:
         inspector.inspect({"source": forbidden_url})
     assert _code(exc_info.value) in {"SOURCE_NOT_ALLOWED", "URL_SCHEME_NOT_ALLOWED"}
+
+
+def test_settings_cookies_file_and_yt_dlp_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vidscope.settings import COOKIES_FILE_ENV, load_settings
+
+    cookies = tmp_path / "cookies.txt"
+    cookies.write_text("# Netscape HTTP Cookie File\n")
+    settings = load_settings({COOKIES_FILE_ENV: str(cookies)})
+    assert settings.cookies_file == cookies
+
+    captured: dict[str, Any] = {}
+
+    class InspectorProvider:
+        def extract_info(
+            self,
+            source: str,
+            *,
+            download: bool = False,
+            options: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            captured["options"] = options or {}
+            return {
+                "id": "abc",
+                "title": "sample",
+                "duration": 10.0,
+                "formats": [],
+                "subtitles": {},
+            }
+
+    inspector = SourceInspector(
+        yt_dlp_provider=InspectorProvider(),
+        settings=settings,
+    )
+    inspector.inspect({"source": "https://example.com/watch?v=sample"})
+    assert captured["options"].get("cookiefile") == str(cookies)
+    if shutil.which("node"):
+        assert "js_runtimes" in captured["options"]
+
+
+def test_format_choice_pairs_separate_video_and_audio_dash_streams() -> None:
+    from vidscope.backends.source import _format_choice
+
+    formats = [
+        {
+            "format_id": "v-1080",
+            "vcodec": "h264",
+            "acodec": "none",
+            "height": 1080,
+            "filesize": 500,
+        },
+        {
+            "format_id": "v-720",
+            "vcodec": "h264",
+            "acodec": "none",
+            "height": 720,
+            "filesize": 300,
+        },
+        {
+            "format_id": "a-128",
+            "vcodec": "none",
+            "acodec": "aac",
+            "abr": 128,
+            "filesize": 100,
+        },
+        {
+            "format_id": "a-64",
+            "vcodec": "none",
+            "acodec": "aac",
+            "abr": 64,
+            "filesize": 50,
+        },
+    ]
+
+    # Both needed, no muxed format exists -> pairs best video + best audio
+    chosen = _format_choice(formats, max_bytes=1000, need_video=True, need_audio=True)
+    assert chosen == "v-1080+a-128"
+
+    # Max bytes constraint forces lower tier
+    chosen_constrained = _format_choice(
+        formats, max_bytes=380, need_video=True, need_audio=True
+    )
+    assert chosen_constrained == "v-720+a-64"
+
+
+def test_format_choice_prefers_requested_language_and_original_audio() -> None:
+    from vidscope.backends.source import _format_choice
+
+    formats = [
+        {
+            "format_id": "v-1080",
+            "vcodec": "h264",
+            "acodec": "none",
+            "height": 1080,
+            "filesize": 500,
+        },
+        {
+            "format_id": "251-es-dub",
+            "vcodec": "none",
+            "acodec": "opus",
+            "language": "es",
+            "format_note": "Spanish, medium",
+            "language_preference": -1,
+            "abr": 155,
+            "filesize": 150,
+        },
+        {
+            "format_id": "251-en-orig",
+            "vcodec": "none",
+            "acodec": "opus",
+            "language": "en-US",
+            "format_note": "English (US) original (default), medium",
+            "language_preference": 10,
+            "abr": 136,
+            "filesize": 130,
+        },
+    ]
+
+    # Default/English request prefers original English audio even if Spanish dub has higher bitrate
+    chosen = _format_choice(
+        formats, max_bytes=1000, need_video=True, need_audio=True, language="en"
+    )
+    assert chosen == "v-1080+251-en-orig"
+
+    # Audio only also selects English original
+    chosen_audio = _format_choice(
+        formats, max_bytes=1000, need_video=False, need_audio=True, language="en"
+    )
+    assert chosen_audio == "251-en-orig"
+
+    # Explicit Spanish request prefers Spanish audio
+    chosen_es = _format_choice(
+        formats, max_bytes=1000, need_video=True, need_audio=True, language="es"
+    )
+    assert chosen_es == "v-1080+251-es-dub"

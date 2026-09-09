@@ -79,9 +79,23 @@ class SileroVadBackend:
         try:
             load = self.loader or module.load_silero_vad
             model = load(onnx=False)
-            read_audio = module.read_audio
             get_timestamps = module.get_speech_timestamps
-            waveform = read_audio(str(audio_path), sampling_rate=16_000)
+            waveform: Any = None
+            try:
+                import soundfile as sf
+                import torch
+
+                data, _sr = sf.read(str(audio_path), dtype="float32")
+                wav = torch.from_numpy(data)
+                if wav.ndim > 1:
+                    wav = wav.mean(dim=-1)
+                waveform = wav
+            except Exception:
+                read_audio = getattr(module, "read_audio", None)
+                if callable(read_audio):
+                    waveform = read_audio(str(audio_path), sampling_rate=16_000)
+                else:
+                    raise
             raw = get_timestamps(
                 waveform, model, sampling_rate=16_000, return_seconds=True
             )
@@ -94,13 +108,12 @@ class SileroVadBackend:
         intervals: list[dict[str, float]] = []
         for item in raw or ():
             try:
-                item_start = max(
-                    start,
-                    float(_field(item, "start", _field(item, "start_seconds", 0.0))),
+                rel_start = float(
+                    _field(item, "start", _field(item, "start_seconds", 0.0))
                 )
-                item_end = min(
-                    end, float(_field(item, "end", _field(item, "end_seconds", 0.0)))
-                )
+                rel_end = float(_field(item, "end", _field(item, "end_seconds", 0.0)))
+                item_start = max(start, round(start + rel_start, 3))
+                item_end = min(end, round(start + rel_end, 3))
             except (TypeError, ValueError):
                 continue
             if item_end > item_start:
