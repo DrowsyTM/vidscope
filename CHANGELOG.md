@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced persistent Docker PO container with native on-demand script provider (`bgutil:script-node` via `generate_once.js`), eliminating persistent background containers.
 - Added `VIDSCOPE_COOKIES_FILE` environment configuration and `Settings.cookies_file` support for optional Netscape cookie-jar authentication across yt-dlp, curl-cffi, and youtube-transcript-api.
 - Added `VIDSCOPE_WHISPER_MODEL`, `VIDSCOPE_WHISPER_DEVICE`, and `VIDSCOPE_WHISPER_COMPUTE_TYPE` settings for flexible ASR configuration.
-- Added automatic device detection (`cuda` when CUDA GPU is available, fallback to `cpu` with `int8` quantization) and multilingual model fallback (`tiny` when `language != "en"`).
+- Added automatic device detection (`cuda` when CUDA GPU is available, fallback to `cpu` with `int8` quantization), VRAM-aware default model selection (`base.en`/`base` on CUDA with $\ge 1\text{ GB}$ VRAM; `tiny.en`/`tiny` on CPU or low-VRAM), and multilingual model fallback (`base`/`tiny` when `language != "en"`).
 - Added `vidscope doctor` CLI diagnostic command checking FFmpeg, FFprobe, Tesseract, Whisper/CUDA device, Node.js runtime, PO token provider status, and cookie files with `--json` support.
 - Added `vidscope setup-pot` CLI helper command to automatically clone and build the standalone on-demand PO token generator (`generate_once.js`).
 - Added ASR accuracy evaluation benchmark (`benchmarks/test_asr_accuracy.py`) calculating Word Error Rate (WER) and timestamp drift against reference transcripts.

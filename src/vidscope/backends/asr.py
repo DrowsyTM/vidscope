@@ -84,13 +84,45 @@ def _detect_device(configured: str | None) -> str:
     return "cpu"
 
 
-def _resolve_model_name(configured: str | None, language: str) -> str:
+def _get_cuda_vram_bytes() -> int:
+    """Return total CUDA VRAM in bytes, or 0 if no CUDA device."""
+    try:
+        import torch
+
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            return int(torch.cuda.get_device_properties(0).total_memory)
+    except Exception:
+        pass
+    try:
+        import subprocess
+
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            text=True,
+            timeout=2.0,
+        ).strip()
+        first_line = out.splitlines()[0]
+        return int(first_line) * 1024 * 1024
+    except Exception:
+        pass
+    return 0
+
+
+def _resolve_model_name(
+    configured: str | None,
+    language: str,
+    device: str = "cpu",
+) -> str:
     if configured and configured.strip():
         return configured.strip()
     norm_lang = language.strip().lower()
-    if norm_lang in ("en", "english"):
-        return "tiny.en"
-    return "tiny"
+    is_english = norm_lang in ("en", "english")
+
+    # If running on CUDA with at least 1 GB of VRAM, use base model for higher accuracy
+    if device == "cuda" and _get_cuda_vram_bytes() >= 1024 * 1024 * 1024:
+        return "base.en" if is_english else "base"
+
+    return "tiny.en" if is_english else "tiny"
 
 
 def _resolve_compute_type(configured: str | None, device: str) -> str:
@@ -160,7 +192,9 @@ class FasterWhisperBackend:
 
         device = _detect_device(configured_device)
         compute_type = _resolve_compute_type(configured_compute_type, device)
-        model_name = _resolve_model_name(configured_model, language_value)
+        model_name = _resolve_model_name(
+            configured_model, language_value, device=device
+        )
         cpu_threads = 4 if device == "cpu" else 0
         num_workers = 1
 

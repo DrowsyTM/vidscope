@@ -261,7 +261,9 @@ def test_faster_whisper_backend_respects_device_and_model_settings(
     )
 
 
-def test_faster_whisper_backend_multilingual_fallback(tmp_path: Path) -> None:
+def test_faster_whisper_backend_multilingual_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     audio = tmp_path / "audio.wav"
     audio.write_bytes(b"audio")
     calls: dict[str, Any] = {}
@@ -283,13 +285,31 @@ def test_faster_whisper_backend_multilingual_fallback(tmp_path: Path) -> None:
         calls["model"] = (args, kwargs)
         return DummyModel()
 
-    result = FasterWhisperBackend(model_factory=factory).transcribe(
+    # On CPU, non-English defaults to "tiny"
+    monkeypatch.setattr("vidscope.backends.asr._detect_device", lambda _: "cpu")
+    result_cpu = FasterWhisperBackend(model_factory=factory).transcribe(
         audio, language="es"
     )
-
-    assert result.metadata["model"] == "tiny"
+    assert result_cpu.metadata["model"] == "tiny"
     assert calls["model"][0] == ("tiny",)
     assert calls["transcribe"][1]["language"] == "es"
+
+    # On CUDA with >= 1GB VRAM, defaults to "base" for non-English and "base.en" for English
+    monkeypatch.setattr("vidscope.backends.asr._detect_device", lambda _: "cuda")
+    monkeypatch.setattr(
+        "vidscope.backends.asr._get_cuda_vram_bytes", lambda: 2 * 1024 * 1024 * 1024
+    )
+    result_cuda_es = FasterWhisperBackend(model_factory=factory).transcribe(
+        audio, language="es"
+    )
+    assert result_cuda_es.metadata["model"] == "base"
+    assert calls["model"][0] == ("base",)
+
+    result_cuda_en = FasterWhisperBackend(model_factory=factory).transcribe(
+        audio, language="en"
+    )
+    assert result_cuda_en.metadata["model"] == "base.en"
+    assert calls["model"][0] == ("base.en",)
 
 
 def test_settings_whisper_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:

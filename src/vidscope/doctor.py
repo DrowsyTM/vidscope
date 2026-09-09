@@ -188,7 +188,8 @@ def run_doctor(
                 details={
                     "cuda_devices": cuda_count,
                     "device": "cuda" if cuda_count > 0 else "cpu",
-                    "whisper_model": cfg.whisper_model or "tiny.en",
+                    "whisper_model": cfg.whisper_model
+                    or ("base.en" if cuda_count > 0 else "tiny.en"),
                 },
             )
         )
