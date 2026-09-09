@@ -99,7 +99,7 @@ def _resolve_compute_type(configured: str | None, device: str) -> str:
     if device == "cuda":
         _preload_cuda_libraries()
         try:
-            import ctranslate2  # type: ignore[import-untyped]
+            import ctranslate2
 
             supported = ctranslate2.get_supported_compute_types("cuda")
             if "float16" in supported:

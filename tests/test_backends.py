@@ -111,6 +111,7 @@ def test_faster_whisper_backend_uses_benchmarked_local_defaults(
         calls["model"] = (args, kwargs)
         return Model()
 
+    monkeypatch.setattr("vidscope.backends.asr._detect_device", lambda _: "cpu")
     result = FasterWhisperBackend(model_factory=factory).transcribe(
         audio, language="en"
     )
