@@ -7,6 +7,7 @@ missing local capabilities before any media stage can run.
 
 from __future__ import annotations
 
+import urllib.parse
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from inspect import signature
@@ -234,8 +235,22 @@ def _language_matches(track_language: object, requested: object) -> bool:
 
 
 def _is_youtube_source(source: str) -> bool:
-    s = source.lower()
-    return "youtube.com" in s or "youtu.be" in s or "youtube-nocookie.com" in s
+    try:
+        url = source if ("://" in source or not source.startswith(("/", "."))) else ""
+        if url and "://" not in url:
+            url = "//" + url
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        return (
+            host == "youtube.com"
+            or host.endswith(".youtube.com")
+            or host == "youtu.be"
+            or host.endswith(".youtu.be")
+            or host == "youtube-nocookie.com"
+            or host.endswith(".youtube-nocookie.com")
+        )
+    except Exception:
+        return False
 
 
 def _select_caption(inspection: object, request: AnalyzeVideoRequest) -> object | None:

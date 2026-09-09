@@ -1112,6 +1112,26 @@ def _parse_caption_payload(
     return result[:MAX_CAPTION_SEGMENTS]
 
 
+def _is_youtube_source(source: str) -> bool:
+    """Determine whether source is a YouTube URL by validating its parsed hostname."""
+    try:
+        url = source if ("://" in source or not source.startswith(("/", "."))) else ""
+        if url and "://" not in url:
+            url = "//" + url
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        return (
+            host == "youtube.com"
+            or host.endswith(".youtube.com")
+            or host == "youtu.be"
+            or host.endswith(".youtu.be")
+            or host == "youtube-nocookie.com"
+            or host.endswith(".youtube-nocookie.com")
+        )
+    except Exception:
+        return False
+
+
 def _transcript_video_id(source: str) -> str | None:
     parsed = urllib.parse.urlparse(source)
     host = parsed.netloc.lower().split(":", 1)[0].rstrip(".")
@@ -1173,11 +1193,7 @@ class CaptionResolver:
     ) -> CaptionTrack | None:
         source = str(getattr(inspection, "source", "") or "")
         is_url = bool(getattr(inspection, "is_url", False))
-        is_youtube = is_url and bool(
-            _transcript_video_id(source)
-            or "youtube.com" in source.lower()
-            or "youtu.be" in source.lower()
-        )
+        is_youtube = is_url and _is_youtube_source(source)
         # Remote YouTube caption pulling is disabled; rely on local ASR
         if is_youtube:
             return None
@@ -1831,11 +1847,7 @@ class MediaAcquirer:
             for task in (raw_tasks if isinstance(raw_tasks, Iterable) else (raw_tasks,))
         }
         source = str(getattr(inspection, "source", "") or "")
-        is_youtube = bool(
-            _transcript_video_id(source)
-            or "youtube.com" in source.lower()
-            or "youtu.be" in source.lower()
-        )
+        is_youtube = _is_youtube_source(source)
         has_captions = (
             False
             if is_youtube
