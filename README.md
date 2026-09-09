@@ -187,6 +187,7 @@ Add `vidscope` to `.cursor/mcp.json`:
 | `get_job_status` | Incremental streaming status | Instant | Check background job status and retrieve newly completed timeline chunks using `since_chunk` cursor. Emits structured `next_action`, `retry_after_seconds`, and `coverage` metadata. |
 | `view_frame` | Multimodal frame delivery | Sync (~100ms–2s) | View any video frame directly in conversation context as a native MCP `Image` (`image/jpeg`) block with OCR metadata, via `frame_id` or `(source, timestamp)`. |
 | `search_video` | Post-analysis transcript grep | Sync (~100ms) | Grep across analyzed speech transcripts (`job_id`) with regex, case-sensitivity, and windowed `coverage` metadata. Strictly gated to completed jobs. |
+| `get_transcript` | Targeted dialogue retrieval | Sync (~50ms) | Retrieve timestamped dialogue segments and joined text for a specific time window (`start_seconds`, `end_seconds`, `max_duration_seconds`). Strictly gated to completed jobs. |
 
 ### Recommended Agent Workflow
 
@@ -204,6 +205,9 @@ flowchart TD
     D --> I{"Search spoken topics/keywords?"}
     I -- Yes --> J["search_video(job_id, query)"]
     J --> H
+    D --> K{"Read verbatim dialogue?"}
+    K -- Yes --> L["get_transcript(job_id, start_seconds, end_seconds)"]
+    L --> H
 ```
 
 ---

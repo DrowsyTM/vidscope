@@ -8,12 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Unified Agentic FastMCP tool suite (5 tools) for zero-filesystem, multimodal agent interaction:
+- Unified Agentic FastMCP tool suite (6 tools) for zero-filesystem, multimodal agent interaction:
   - `get_video_info`: Fast preflight metadata, subtitles, and native chapters discovery.
   - `analyze_video`: Unified video analysis entry point with sync-then-async fallback (<5s sync window for fast timeline return; background handoff with ETA and `job_id` for longer runs).
   - `get_job_status`: Incremental streaming job status with cursor pagination (`since_chunk`) to prevent context window token bloat.
   - `view_frame`: Native MCP `Image` content block delivery (`image/jpeg`) with inline OCR and timestamp metadata.
   - `search_video`: Post-analysis transcript grep engine supporting substring and regex matching across analyzed speech transcripts (`job_id`).
+  - `get_transcript`: Targeted dialogue and verbatim transcript retrieval with bounded time windows (`start_seconds`, `end_seconds`, `max_duration_seconds`) and dual representation (joined text and timestamped segments).
 - Thread-safe in-memory `JobManager` with completion signaling (`completed_event`), incremental cursor pagination, transcript accumulation, and automatic 2-hour TTL cleanup.
 - Integrated `curl-cffi` and `bgutil-ytdlp-pot-provider` dependencies for browser TLS fingerprint impersonation and Proof-of-Origin (PO) token generation.
 - Replaced persistent Docker PO container with native on-demand script provider (`bgutil:script-node` via `generate_once.js`), eliminating persistent background containers.

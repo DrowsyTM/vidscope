@@ -1049,6 +1049,199 @@ def search_video(
     return res
 
 
+@mcp.tool(
+    name="get_transcript",
+    annotations={"readOnlyHint": True, "idempotentHint": True},
+)
+def get_transcript(
+    job_id: Annotated[
+        str,
+        Field(description="Analysis job ID from analyze_video to read transcript from"),
+    ],
+    start_seconds: Annotated[
+        float,
+        Field(ge=0.0, description="Start offset in seconds (default: 0.0)"),
+    ] = 0.0,
+    end_seconds: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            description="End offset in seconds. If omitted, defaults to start_seconds + max_duration_seconds",
+        ),
+    ] = None,
+    max_duration_seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            le=600.0,
+            description="Maximum allowed transcript window duration in seconds (default: 300.0, max: 600.0)",
+        ),
+    ] = 300.0,
+) -> dict[str, Any] | ToolResult:
+    """Retrieve timestamped speech transcript segments and joined dialogue text for a video time range.
+
+    Requires a completed analysis job. Bounded to max_duration_seconds (up to 600s/10min)
+    to protect agent context windows.
+    """
+    if start_seconds < 0.0:
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="get_transcript",
+            message="start_seconds must be >= 0.0",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    if max_duration_seconds <= 0.0 or max_duration_seconds > 600.0:
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="get_transcript",
+            message="max_duration_seconds must be > 0.0 and <= 600.0",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    job = global_job_manager.get_job(job_id)
+    if job is None:
+        error = AnalysisError(
+            code=ErrorCode.ARTIFACT_NOT_FOUND,
+            stage="get_transcript",
+            message=f"Job '{job_id}' was not found or has expired.",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    if job.status == "failed":
+        error = AnalysisError(
+            code=ErrorCode.INTERNAL_STAGE_FAILED,
+            stage="get_transcript",
+            message=job.error or "Analysis job failed.",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        payload["job_id"] = job_id
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    if job.status != "completed":
+        remaining = (
+            max(1.0, round(job.last_estimated_remaining, 1))
+            if job.last_estimated_remaining > 0
+            else max(1.0, round(job.estimated_total_seconds, 1))
+        )
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="get_transcript",
+            message=(
+                f"Job '{job_id}' is still processing ({round(job.progress_percentage)}% complete). "
+                "get_transcript requires a completed job to ensure full transcript availability."
+            ),
+            retryable=True,
+            diagnostics={
+                "job_id": job_id,
+                "status": job.status,
+                "progress_percentage": round(job.progress_percentage, 1),
+                "completed_chunks": job.completed_chunks,
+                "total_chunks": job.total_chunks,
+                "retry_after_seconds": remaining,
+                "next_action": "get_job_status",
+            },
+        )
+        payload = _error_payload(error)
+        payload["retry_after_seconds"] = remaining
+        payload["next_action"] = "get_job_status"
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
+
+    coverage_meta = job.coverage()
+    job_analyzed_end = coverage_meta["analyzed_end_seconds"]
+
+    if end_seconds is not None:
+        if end_seconds <= start_seconds:
+            error = AnalysisError(
+                code=ErrorCode.INVALID_REQUEST,
+                stage="get_transcript",
+                message=f"end_seconds ({end_seconds}) must be greater than start_seconds ({start_seconds})",
+                retryable=False,
+            )
+            payload = _error_payload(error)
+            return ToolResult(
+                content=payload, structured_content=payload, is_error=True
+            )
+
+        if (end_seconds - start_seconds) > max_duration_seconds:
+            error = AnalysisError(
+                code=ErrorCode.INVALID_REQUEST,
+                stage="get_transcript",
+                message=(
+                    f"Requested window ({end_seconds - start_seconds:.1f}s) exceeds "
+                    f"max_duration_seconds ({max_duration_seconds:.1f}s). "
+                    "Narrow start_seconds and end_seconds to protect context window."
+                ),
+                retryable=False,
+            )
+            payload = _error_payload(error)
+            return ToolResult(
+                content=payload, structured_content=payload, is_error=True
+            )
+        resolved_end = end_seconds
+    else:
+        if job_analyzed_end > start_seconds:
+            resolved_end = min(start_seconds + max_duration_seconds, job_analyzed_end)
+        else:
+            resolved_end = start_seconds + max_duration_seconds
+
+    # Filter transcript segments overlapping [start_seconds, resolved_end]
+    matching_segments: list[dict[str, Any]] = []
+    for seg in job.full_transcript:
+        s_start = seg.get("start_seconds")
+        if s_start is None:
+            s_start = seg.get("start", 0.0)
+        s_end = seg.get("end_seconds")
+        if s_end is None:
+            s_end = seg.get("end", s_start)
+        s_start_f = float(s_start)
+        s_end_f = float(s_end)
+
+        if s_end_f > start_seconds and s_start_f < resolved_end:
+            text = str(seg.get("text") or "").strip()
+            matching_segments.append(
+                {
+                    "start_seconds": round(s_start_f, 2),
+                    "end_seconds": round(s_end_f, 2),
+                    "formatted_time": format_timestamp(s_start_f),
+                    "text": text,
+                }
+            )
+
+    full_text = " ".join(s["text"] for s in matching_segments if s["text"]).strip()
+
+    res: dict[str, Any] = {
+        "job_id": job_id,
+        "start_seconds": round(start_seconds, 2),
+        "end_seconds": round(resolved_end, 2),
+        "window_duration_seconds": round(resolved_end - start_seconds, 2),
+        "coverage": coverage_meta,
+        "segments_count": len(matching_segments),
+        "segments": matching_segments,
+        "text": full_text,
+    }
+
+    if len(matching_segments) == 0:
+        if not job.full_transcript:
+            res["hint"] = (
+                "Job has no speech transcript (visual-only analysis). "
+                "Call view_frame(frame_id=...) to inspect frames."
+            )
+        else:
+            res["hint"] = (
+                f"No speech segments found in range {format_timestamp(start_seconds)} - "
+                f"{format_timestamp(resolved_end)}."
+            )
+    return res
+
+
 @mcp.resource(
     "vidscope://runs/{run_id}/artifacts/{artifact_id}{?page,offset,limit}",
     name="read_artifact",
@@ -1104,7 +1297,8 @@ def analyze_video_workflow(source: str) -> str:
 2. If chapter titles answer the question, refer to chapter timestamps directly.
 3. Call analyze_video(source='{source}') to begin streaming timeline analysis.
 4. If it transitions to background processing, poll get_job_status(job_id='...', since_chunk=...) using next_since_chunk.
-5. Use view_frame(frame_id='...') to inspect high-resolution visual evidence for key timestamps.
+5. Use get_transcript(job_id='...', start_seconds=..., end_seconds=...) to read exact speech/dialogue for any timestamp range.
+6. Use view_frame(frame_id='...') to inspect high-resolution visual evidence for key timestamps.
 """
 
 
@@ -1115,7 +1309,8 @@ def search_video_workflow(source: str, query: str) -> str:
 1. Start analysis with analyze_video(source='{source}').
 2. If background processing, poll get_job_status(job_id=...) until completed.
 3. Once completed, search the transcript with search_video(job_id='...', query='{query}').
-4. Inspect matching frames using view_frame(source='{source}', timestamp_seconds=match['start_seconds']).
+4. Read surrounding dialogue context using get_transcript(job_id='...', start_seconds=match['start_seconds'] - 15, end_seconds=match['end_seconds'] + 15).
+5. Inspect matching frames using view_frame(source='{source}', timestamp_seconds=match['start_seconds']).
 """
 
 
@@ -1135,6 +1330,7 @@ def _server_info_resource() -> str:
                 "get_job_status",
                 "view_frame",
                 "search_video",
+                "get_transcript",
             ],
             "prompts": [
                 "analyze_video_workflow",
@@ -1190,6 +1386,7 @@ __all__ = [
     "analyze_video",
     "analyze_video_workflow",
     "get_job_status",
+    "get_transcript",
     "get_video_info",
     "main",
     "mcp",

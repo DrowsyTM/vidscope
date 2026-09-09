@@ -90,12 +90,13 @@ def test_mcp_registers_expected_tools_with_annotations() -> None:
     if tools is None:
         pytest.skip("FastMCP version does not expose tool introspection")
     tool_map = {_field(t, "name"): t for t in tools}
-    assert len(tool_map) == 5
+    assert len(tool_map) == 6
     assert "analyze_video" in tool_map
     assert "get_video_info" in tool_map
     assert "search_video" in tool_map
     assert "view_frame" in tool_map
     assert "get_job_status" in tool_map
+    assert "get_transcript" in tool_map
 
     assert _tool_annotation(tool_map["get_video_info"], "readOnlyHint") is True
     assert _tool_annotation(tool_map["get_video_info"], "idempotentHint") is True
@@ -107,6 +108,8 @@ def test_mcp_registers_expected_tools_with_annotations() -> None:
     assert _tool_annotation(tool_map["view_frame"], "idempotentHint") is True
     assert _tool_annotation(tool_map["search_video"], "readOnlyHint") is True
     assert _tool_annotation(tool_map["search_video"], "idempotentHint") is True
+    assert _tool_annotation(tool_map["get_transcript"], "readOnlyHint") is True
+    assert _tool_annotation(tool_map["get_transcript"], "idempotentHint") is True
 
 
 def _resource_error_code(value: Any) -> str | None:
@@ -698,6 +701,7 @@ def test_server_info_static_resource() -> None:
     assert payload["name"] == "vidscope"
     assert "3.4.7" in payload["version"]
     assert "analyze_video" in payload["tools"]
+    assert "get_transcript" in payload["tools"]
     assert "capabilities" in payload
     assert "local_asr_available" in payload["capabilities"]
     assert "local_ocr_available" in payload["capabilities"]
@@ -953,3 +957,185 @@ def test_eta_smoothing_stability() -> None:
     assert rem1 > 0
     # Remaining ETA should not spike wildly upwards from 60s
     assert rem1 <= 60.0 * 1.15
+
+
+def test_get_transcript_success_and_windowing() -> None:
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import get_transcript
+
+    job = global_job_manager.create_job(
+        "test_transcript.mp4",
+        [(0.0, 60.0)],
+        video_duration_seconds=60.0,
+    )
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "summary": "Full speech"},
+        completed_chunks=1,
+        transcript_segments=[
+            {"start_seconds": 0.0, "end_seconds": 5.0, "text": "Hello world."},
+            {
+                "start_seconds": 10.0,
+                "end_seconds": 15.0,
+                "text": "This is segment one.",
+            },
+            {
+                "start_seconds": 20.0,
+                "end_seconds": 25.0,
+                "text": "This is segment two.",
+            },
+            {"start_seconds": 40.0, "end_seconds": 50.0, "text": "Final thoughts."},
+        ],
+    )
+    global_job_manager.complete_job(job.job_id)
+
+    # Query narrow window 8.0 - 28.0 (should capture segments at 10-15 and 20-25)
+    res = get_transcript(job_id=job.job_id, start_seconds=8.0, end_seconds=28.0)
+    assert isinstance(res, dict)
+    assert res["segments_count"] == 2
+    assert res["start_seconds"] == 8.0
+    assert res["end_seconds"] == 28.0
+    assert res["window_duration_seconds"] == 20.0
+    assert res["text"] == "This is segment one. This is segment two."
+    assert len(res["segments"]) == 2
+    assert res["segments"][0]["start_seconds"] == 10.0
+    assert res["coverage"]["is_full_video"] is True
+
+
+def test_get_transcript_default_end_seconds_clamps() -> None:
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import get_transcript
+
+    job = global_job_manager.create_job(
+        "short_video.mp4",
+        [(0.0, 45.0)],
+        video_duration_seconds=45.0,
+    )
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "summary": "Speech"},
+        completed_chunks=1,
+        transcript_segments=[
+            {"start_seconds": 5.0, "end_seconds": 10.0, "text": "Start speech."},
+            {"start_seconds": 35.0, "end_seconds": 40.0, "text": "Ending speech."},
+        ],
+    )
+    global_job_manager.complete_job(job.job_id)
+
+    # Calling without end_seconds should clamp to analyzed_end_seconds (45.0)
+    res = get_transcript(job_id=job.job_id, start_seconds=0.0)
+    assert isinstance(res, dict)
+    assert res["end_seconds"] == 45.0
+    assert res["segments_count"] == 2
+    assert "Start speech. Ending speech." in res["text"]
+
+
+def test_get_transcript_rejects_inflight_processing_job() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import get_transcript
+
+    job = global_job_manager.create_job("inflight.mp4", [(0.0, 60.0)])
+    res = get_transcript(job_id=job.job_id)
+    assert isinstance(res, ToolResult)
+    assert res.is_error is True
+    assert res.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert res.structured_content["retryable"] is True
+    assert res.structured_content["next_action"] == "get_job_status"
+    assert res.structured_content["retry_after_seconds"] > 0
+
+
+def test_get_transcript_job_not_found_and_failed() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import get_transcript
+
+    # Not found
+    res1 = get_transcript(job_id="job_missing_xyz")
+    assert isinstance(res1, ToolResult)
+    assert res1.is_error is True
+    assert res1.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
+
+    # Failed
+    job_failed = global_job_manager.create_job("fail.mp4", [(0.0, 30.0)])
+    global_job_manager.fail_job(job_failed.job_id, "decoder error")
+    res2 = get_transcript(job_id=job_failed.job_id)
+    assert isinstance(res2, ToolResult)
+    assert res2.is_error is True
+    assert res2.structured_content["code"] == ErrorCode.INTERNAL_STAGE_FAILED
+
+
+def test_get_transcript_validation_errors() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import get_transcript
+
+    job = global_job_manager.create_job("val.mp4", [(0.0, 60.0)])
+    global_job_manager.complete_job(job.job_id)
+
+    # start_seconds < 0
+    res1 = get_transcript(job_id=job.job_id, start_seconds=-10.0)
+    assert isinstance(res1, ToolResult)
+    assert res1.structured_content["code"] == ErrorCode.INVALID_REQUEST
+
+    # end_seconds <= start_seconds
+    res2 = get_transcript(job_id=job.job_id, start_seconds=20.0, end_seconds=10.0)
+    assert isinstance(res2, ToolResult)
+    assert res2.structured_content["code"] == ErrorCode.INVALID_REQUEST
+
+    # window > max_duration_seconds
+    res3 = get_transcript(
+        job_id=job.job_id,
+        start_seconds=0.0,
+        end_seconds=400.0,
+        max_duration_seconds=300.0,
+    )
+    assert isinstance(res3, ToolResult)
+    assert res3.structured_content["code"] == ErrorCode.INVALID_REQUEST
+
+
+def test_get_transcript_zero_segments_hints() -> None:
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import get_transcript
+
+    # 1. Speech exists, but outside requested range
+    job1 = global_job_manager.create_job(
+        "speech.mp4", [(0.0, 60.0)], video_duration_seconds=60.0
+    )
+    global_job_manager.update_job_progress(
+        job1.job_id,
+        section={"chunk_index": 1, "summary": "Speech"},
+        completed_chunks=1,
+        transcript_segments=[
+            {"start_seconds": 10.0, "end_seconds": 20.0, "text": "Speech"}
+        ],
+    )
+    global_job_manager.complete_job(job1.job_id)
+
+    res1 = get_transcript(job_id=job1.job_id, start_seconds=30.0, end_seconds=50.0)
+    assert isinstance(res1, dict)
+    assert res1["segments_count"] == 0
+    assert "No speech segments found in range" in res1["hint"]
+
+    # 2. Visual-only (no transcript segments anywhere)
+    job2 = global_job_manager.create_job(
+        "visual.mp4", [(0.0, 60.0)], video_duration_seconds=60.0
+    )
+    global_job_manager.update_job_progress(
+        job2.job_id,
+        section={"chunk_index": 1, "summary": "Visual only"},
+        completed_chunks=1,
+        transcript_segments=[],
+    )
+    global_job_manager.complete_job(job2.job_id)
+
+    res2 = get_transcript(job_id=job2.job_id, start_seconds=0.0, end_seconds=30.0)
+    assert isinstance(res2, dict)
+    assert res2["segments_count"] == 0
+    assert "visual-only" in res2["hint"]
