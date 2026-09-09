@@ -270,3 +270,48 @@ def test_settings_cookies_file_and_yt_dlp_options(
     assert captured["options"].get("cookiefile") == str(cookies)
     if shutil.which("node"):
         assert "js_runtimes" in captured["options"]
+
+
+def test_format_choice_pairs_separate_video_and_audio_dash_streams() -> None:
+    from vidscope.backends.source import _format_choice
+
+    formats = [
+        {
+            "format_id": "v-1080",
+            "vcodec": "h264",
+            "acodec": "none",
+            "height": 1080,
+            "filesize": 500,
+        },
+        {
+            "format_id": "v-720",
+            "vcodec": "h264",
+            "acodec": "none",
+            "height": 720,
+            "filesize": 300,
+        },
+        {
+            "format_id": "a-128",
+            "vcodec": "none",
+            "acodec": "aac",
+            "abr": 128,
+            "filesize": 100,
+        },
+        {
+            "format_id": "a-64",
+            "vcodec": "none",
+            "acodec": "aac",
+            "abr": 64,
+            "filesize": 50,
+        },
+    ]
+
+    # Both needed, no muxed format exists -> pairs best video + best audio
+    chosen = _format_choice(formats, max_bytes=1000, need_video=True, need_audio=True)
+    assert chosen == "v-1080+a-128"
+
+    # Max bytes constraint forces lower tier
+    chosen_constrained = _format_choice(
+        formats, max_bytes=380, need_video=True, need_audio=True
+    )
+    assert chosen_constrained == "v-720+a-64"

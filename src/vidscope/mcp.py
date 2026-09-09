@@ -281,6 +281,7 @@ def _process_job_chunks(
                 ]
 
                 res_ok = False
+                transcript_error: str | None = None
                 for tasks in tasks_to_try:
                     try:
                         request = AnalyzeVideoRequest(
@@ -299,6 +300,7 @@ def _process_job_chunks(
                         break
                     except VideoAnalyzerFailure as exc:
                         if tasks == tasks_to_try[0]:
+                            transcript_error = str(exc)
                             logger.warning(
                                 "Job %s chunk %d: transcript extraction failed (%s); falling back to visual-only",
                                 job_id,
@@ -416,6 +418,7 @@ def _process_job_chunks(
                 )
                 if full_transcript:
                     summary_text = full_transcript[:4_000]
+                    transcript_status = "completed"
                 else:
                     detected_texts = [
                         f"[{kf['formatted_time']}] {kf['ocr_text']}"
@@ -433,13 +436,22 @@ def _process_job_chunks(
                             "OCR unavailable (tesseract binary not installed on host)."
                         )
                     summary_text = (
-                        f"Visual keyframes ({len(keyframes)} frames, "
+                        f"Keyframe extraction only ({len(keyframes)} frames, "
                         f"{format_timestamp(start_sec)}-{format_timestamp(end_sec)}). {ocr_summary}"
                     )
+                    if transcript_error:
+                        transcript_status = "failed"
+                        summary_text += (
+                            f" (Transcript extraction failed: {transcript_error})"
+                        )
+                    else:
+                        transcript_status = "no_speech_detected"
+                        summary_text += " (No speech detected in audio window)."
 
-                section = {
+                section: dict[str, Any] = {
                     "chunk_index": index,
                     "mode": "speech_and_visual" if full_transcript else "visual_only",
+                    "transcript_status": transcript_status,
                     "start_seconds": round(start_sec, 2),
                     "end_seconds": round(end_sec, 2),
                     "formatted_range": (
@@ -448,6 +460,8 @@ def _process_job_chunks(
                     "summary": summary_text,
                     "keyframes": keyframes,
                 }
+                if transcript_error:
+                    section["transcript_error"] = transcript_error
                 global_job_manager.update_job_progress(
                     job_id,
                     section,
@@ -1378,8 +1392,9 @@ _configure_tool_schemas()
 
 def main() -> None:
     configure_logging()
-    logging.getLogger("fastmcp").setLevel(logging.WARNING)
-    mcp.run(show_banner=False, log_level="WARNING")
+    logging.getLogger("fastmcp").setLevel(logging.ERROR)
+    logging.getLogger("fastmcp.server").setLevel(logging.ERROR)
+    mcp.run(show_banner=False, log_level="ERROR")
 
 
 __all__ = [
@@ -1395,3 +1410,6 @@ __all__ = [
     "search_video_workflow",
     "view_frame",
 ]
+
+if __name__ == "__main__":
+    main()

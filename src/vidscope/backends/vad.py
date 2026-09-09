@@ -79,9 +79,23 @@ class SileroVadBackend:
         try:
             load = self.loader or module.load_silero_vad
             model = load(onnx=False)
-            read_audio = module.read_audio
             get_timestamps = module.get_speech_timestamps
-            waveform = read_audio(str(audio_path), sampling_rate=16_000)
+            waveform: Any = None
+            try:
+                import soundfile as sf  # type: ignore[import-untyped]
+                import torch
+
+                data, _sr = sf.read(str(audio_path), dtype="float32")
+                wav = torch.from_numpy(data)
+                if wav.ndim > 1:
+                    wav = wav.mean(dim=-1)
+                waveform = wav
+            except Exception:
+                read_audio = getattr(module, "read_audio", None)
+                if callable(read_audio):
+                    waveform = read_audio(str(audio_path), sampling_rate=16_000)
+                else:
+                    raise
             raw = get_timestamps(
                 waveform, model, sampling_rate=16_000, return_seconds=True
             )

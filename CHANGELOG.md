@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `vidscope doctor` CLI diagnostic command checking FFmpeg, FFprobe, Tesseract, Whisper/CUDA device, Node.js runtime, PO token provider status, and cookie files with `--json` support.
 - Added `vidscope setup-pot` CLI helper command to automatically clone and build the standalone on-demand PO token generator (`generate_once.js`).
 - Added ASR accuracy evaluation benchmark (`benchmarks/test_asr_accuracy.py`) calculating Word Error Rate (WER) and timestamp drift against reference transcripts.
+- Added DASH video and audio stream pairing in `_format_choice` to download and mux separate video-only and audio-only tracks within size constraints, enabling local ASR transcription for modern YouTube sources.
+- Added `soundfile` waveform loading in `SileroVadBackend` with channel-averaging and resampling fallback, removing runtime dependency on `torchcodec` under torchaudio >= 2.6.
+- Added explicit `transcript_status` (`"completed"`, `"no_speech_detected"`, `"failed"`) and `transcript_error` tracking on timeline chunk sections.
 
 ### Changed
 - Refactored `search_video` to be strictly post-analysis (`job_id` required; removed `source` and `language`), eliminating upfront agent bypass antipatterns and token-wasting caption fetch attempts.
@@ -35,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Upgraded `FasterWhisperBackend` with dynamic device, compute type, and language-aware model resolution.
 - Consolidated video analysis into a single entry point (`analyze_video`), removing duplicate paths (`get_video_timeline`, `get_video_transcript`, `start_video_analysis`).
 - Refactored FastMCP server to deliver direct multimodal data blocks instead of requiring local filesystem artifact traversal.
+- Refined visual-only chunk summaries to explicitly identify keyframe extraction and surface underlying causes when speech transcript or OCR is unavailable.
+- Configured FastMCP loggers to `ERROR` during stdio server launch, ensuring zero stderr leakage during client argument validation failures.
+- Added standard `if __name__ == "__main__": main()` entrypoint guard to `vidscope.mcp`.
 
 ### Fixed
 - Fixed `view_frame` and chunk keyframe artifact glob resolution when extracting frames into `<output_dir>/<request_id>/frames/`.

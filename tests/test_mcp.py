@@ -1139,3 +1139,97 @@ def test_get_transcript_zero_segments_hints() -> None:
     assert isinstance(res2, dict)
     assert res2["segments_count"] == 0
     assert "visual-only" in res2["hint"]
+
+
+def test_chunk_section_transcript_status_labels() -> None:
+    from vidscope.jobs import global_job_manager
+
+    # 1. Speech completed
+    job = global_job_manager.create_job(
+        "test.mp4", [(0.0, 30.0)], video_duration_seconds=30.0
+    )
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={
+            "chunk_index": 1,
+            "mode": "speech_and_visual",
+            "transcript_status": "completed",
+            "summary": "Full speech transcript",
+        },
+        completed_chunks=1,
+        transcript_segments=[{"start_seconds": 0.0, "end_seconds": 5.0, "text": "Hi"}],
+    )
+    global_job_manager.complete_job(job.job_id)
+    state = global_job_manager.get_job(job.job_id)
+    assert state is not None
+    assert state.available_sections[0]["transcript_status"] == "completed"
+
+    # 2. Visual-only fallback with error
+    job_err = global_job_manager.create_job(
+        "test2.mp4", [(0.0, 30.0)], video_duration_seconds=30.0
+    )
+    global_job_manager.update_job_progress(
+        job_err.job_id,
+        section={
+            "chunk_index": 1,
+            "mode": "visual_only",
+            "transcript_status": "failed",
+            "transcript_error": "CUDA out of memory",
+            "summary": "Keyframe extraction only (4 frames). (Transcript extraction failed: CUDA out of memory)",
+        },
+        completed_chunks=1,
+    )
+    global_job_manager.complete_job(job_err.job_id)
+    state_err = global_job_manager.get_job(job_err.job_id)
+    assert state_err is not None
+    assert state_err.available_sections[0]["transcript_status"] == "failed"
+    assert state_err.available_sections[0]["transcript_error"] == "CUDA out of memory"
+    assert "Keyframe extraction only" in state_err.available_sections[0]["summary"]
+
+
+def test_stdio_validation_error_stderr_suppression() -> None:
+    import json
+    import subprocess
+    import sys
+
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "-m", "vidscope.mcp"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    reqs = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "search_video", "arguments": {}},
+        },
+    ]
+    for r in reqs:
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(r) + "\n")
+        proc.stdin.flush()
+
+    assert proc.stdout is not None
+    _ = proc.stdout.readline()
+    line2 = proc.stdout.readline()
+    proc.terminate()
+    assert proc.stderr is not None
+    stderr = proc.stderr.read()
+
+    assert stderr.strip() == ""
+    parsed = json.loads(line2)
+    assert parsed["result"]["isError"] is True

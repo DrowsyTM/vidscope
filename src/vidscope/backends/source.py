@@ -1522,11 +1522,7 @@ def _format_choice(
     need_audio: bool = False,
     window_seconds: float | None = None,
 ) -> str:
-    candidates: list[tuple[int, int, str]] = []
-    for item in formats:
-        format_id = item.get("format_id")
-        if not format_id:
-            continue
+    def _est_size(item: Mapping[str, Any]) -> float | None:
         size = _finite_float(item.get("filesize")) or _finite_float(
             item.get("filesize_approx")
         )
@@ -1534,19 +1530,86 @@ def _format_choice(
             bitrate = _finite_float(item.get("tbr"))
             if bitrate is not None:
                 size = bitrate * 1_000 * window_seconds / 8 * 1.25
-        if size is not None and size > max_bytes:
+        return size
+
+    def _is_v(item: Mapping[str, Any]) -> bool:
+        return str(item.get("vcodec", "")).lower() not in {"", "none"}
+
+    def _is_a(item: Mapping[str, Any]) -> bool:
+        return str(item.get("acodec", "")).lower() not in {"", "none"}
+
+    if need_video and need_audio:
+        combined_candidates: list[tuple[int, str]] = []
+        video_candidates: list[tuple[int, str, float]] = []
+        audio_candidates: list[tuple[int, str, float]] = []
+
+        for item in formats:
+            format_id = item.get("format_id")
+            if not format_id:
+                continue
+            fid_str = _text(format_id, limit=128)
+            size = _est_size(item)
+            has_v = _is_v(item)
+            has_a = _is_a(item)
+
+            if has_v and has_a:
+                if size is None or size <= max_bytes:
+                    quality = int(
+                        _finite_float(item.get("height")) or 0
+                    ) * 1_000_000 + int(_finite_float(item.get("tbr")) or 0)
+                    combined_candidates.append((-quality, fid_str))
+            elif has_v:
+                quality = int(_finite_float(item.get("height")) or 0) * 1_000_000 + int(
+                    _finite_float(item.get("tbr")) or 0
+                )
+                video_candidates.append((-quality, fid_str, size or 0.0))
+            elif has_a:
+                quality = int(
+                    _finite_float(item.get("abr"))
+                    or _finite_float(item.get("tbr"))
+                    or 0
+                )
+                audio_candidates.append((-quality, fid_str, size or 0.0))
+
+        if combined_candidates:
+            combined_candidates.sort()
+            return combined_candidates[0][1]
+
+        if video_candidates and audio_candidates:
+            video_candidates.sort()
+            audio_candidates.sort()
+            for _vq, v_id, v_sz in video_candidates:
+                for _aq, a_id, a_sz in audio_candidates:
+                    if (v_sz + a_sz) <= max_bytes or max_bytes <= 0:
+                        return f"{v_id}+{a_id}"
+            return f"{video_candidates[0][1]}+{audio_candidates[0][1]}"
+
+        raise _failure(
+            "MEDIA_DECODE_FAILED",
+            "no inspected media format satisfies the requested streams and download limit",
+            stage="acquire_media",
+        )
+
+    candidates: list[tuple[int, int, str]] = []
+    for item in formats:
+        format_id = item.get("format_id")
+        if not format_id:
             continue
-        video = str(item.get("vcodec", "")).lower() not in {"", "none"}
-        audio = str(item.get("acodec", "")).lower() not in {"", "none"}
-        if need_video and not video:
+        size = _est_size(item)
+        if size is not None and max_bytes > 0 and size > max_bytes:
             continue
-        if need_audio and not audio:
+        has_v = _is_v(item)
+        has_a = _is_a(item)
+        if need_video and not has_v:
+            continue
+        if need_audio and not has_a:
             continue
         quality = int(_finite_float(item.get("height")) or 0) * 1_000_000 + int(
             _finite_float(item.get("tbr")) or 0
         )
-        stream_rank = 0 if video and audio else 1
+        stream_rank = 0 if (has_v and has_a) else 1
         candidates.append((stream_rank, -quality, _text(format_id, limit=128)))
+
     if not candidates:
         raise _failure(
             "MEDIA_DECODE_FAILED",
@@ -1554,7 +1617,7 @@ def _format_choice(
             stage="acquire_media",
         )
     candidates.sort()
-    return candidates[0][2]
+    return str(candidates[0][2])
 
 
 def _artifact_from_store(store: Any, path: Path, *, metadata: Mapping[str, Any]) -> Any:
