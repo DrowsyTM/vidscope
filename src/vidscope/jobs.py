@@ -59,6 +59,25 @@ class JobState:
     last_completed_at: float = 0.0
     last_estimated_remaining: float = 0.0
     chunk_durations: list[float] = field(default_factory=list)
+    video_duration_seconds: float | None = None
+
+    def coverage(self) -> dict[str, Any]:
+        """Return structured timeline coverage metadata distinguishing partial from full video."""
+        start_sec = self.chunks[0]["start_seconds"] if self.chunks else 0.0
+        end_sec = self.chunks[-1]["end_seconds"] if self.chunks else 0.0
+        duration = self.video_duration_seconds
+        is_full = False
+        if duration is not None and duration > 0:
+            is_full = (start_sec <= 0.5) and (end_sec >= duration - 1.0)
+        return {
+            "is_full_video": is_full,
+            "analyzed_start_seconds": round(start_sec, 2),
+            "analyzed_end_seconds": round(end_sec, 2),
+            "analyzed_duration_seconds": round(max(0.0, end_sec - start_sec), 2),
+            "video_duration_seconds": round(duration, 2)
+            if duration is not None
+            else None,
+        }
 
     def to_dict(self, since_chunk: int = 0) -> dict[str, Any]:
         now = time.time()
@@ -103,7 +122,7 @@ class JobState:
         if self.status == "processing":
             if len(returned_sections) == 0:
                 message = (
-                    f"Job is still processing ({round(self.progress_percentage)}% complete, "
+                    f"Job is processing ({round(self.progress_percentage)}% complete, "
                     f"{self.completed_chunks}/{self.total_chunks} chunks). "
                     f"No new timeline sections since chunk {since_chunk}. "
                     f"Continue polling with since_chunk={total_available}."
@@ -131,11 +150,14 @@ class JobState:
             "completed_chunks": self.completed_chunks,
             "total_chunks": self.total_chunks,
             "estimated_remaining_seconds": round(remaining, 1),
+            "coverage": self.coverage(),
             "timeline": list(returned_sections),
             "timeline_chunks_returned": len(returned_sections),
             "total_timeline_chunks": total_available,
             "next_since_chunk": total_available,
             "has_more": has_more,
+            "next_action": "get_job_status" if has_more else None,
+            "retry_after_seconds": max(1.0, round(remaining, 1)) if has_more else 0.0,
             "message": message,
             "error": self.error,
         }
@@ -157,6 +179,7 @@ class JobManager:
         chunk_ranges: list[tuple[float, float]],
         estimated_seconds_per_chunk: float = 12.0,
         job_key: str | None = None,
+        video_duration_seconds: float | None = None,
     ) -> JobState:
         with self._lock:
             self._cleanup_locked()
@@ -187,6 +210,7 @@ class JobManager:
                 work_dir=work_dir,
                 completed_event=threading.Event(),
                 job_key=job_key,
+                video_duration_seconds=video_duration_seconds,
             )
             self._jobs[job_id] = job
             return job
@@ -204,6 +228,7 @@ class JobManager:
         job_id: str,
         chunk_ranges: list[tuple[float, float]],
         estimated_seconds_per_chunk: float = 12.0,
+        video_duration_seconds: float | None = None,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -217,7 +242,16 @@ class JobManager:
             job.estimated_total_seconds = max(
                 1.0, len(chunk_ranges) * estimated_seconds_per_chunk
             )
+            if video_duration_seconds is not None:
+                job.video_duration_seconds = video_duration_seconds
             job.updated_at = time.time()
+
+    def set_video_duration(self, job_id: str, duration_seconds: float) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                job.video_duration_seconds = duration_seconds
+                job.updated_at = time.time()
 
     def get_job(self, job_id: str) -> JobState | None:
         with self._lock:

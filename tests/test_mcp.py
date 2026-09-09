@@ -277,16 +277,20 @@ def test_get_video_info_invalid_url_returns_tool_error() -> None:
     assert res.is_error is True
 
 
-def test_search_video_finds_matching_snippets(monkeypatch: pytest.MonkeyPatch) -> None:
-    from vidscope.backends.source import CaptionTrack, SourceInspection
+def test_search_video_finds_matching_snippets() -> None:
+    from vidscope.jobs import global_job_manager
     from vidscope.mcp import search_video
 
-    track = CaptionTrack(
-        kind="manual",
-        language="en",
-        provider="test",
-        source_url=None,
-        segments=[
+    job = global_job_manager.create_job(
+        "test.mp4",
+        [(0.0, 100.0)],
+        video_duration_seconds=100.0,
+    )
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "summary": "Intro"},
+        completed_chunks=1,
+        transcript_segments=[
             {
                 "start_seconds": 10.0,
                 "end_seconds": 15.0,
@@ -304,37 +308,32 @@ def test_search_video_finds_matching_snippets(monkeypatch: pytest.MonkeyPatch) -
             },
         ],
     )
-    monkeypatch.setattr(
-        "vidscope.backends.source.SourceInspector.inspect",
-        lambda self, req: SourceInspection(
-            source="test", is_url=False, duration_seconds=100.0
-        ),
-    )
-    monkeypatch.setattr(
-        "vidscope.backends.source.CaptionResolver.resolve",
-        lambda self, insp, req: track,
-    )
+    global_job_manager.complete_job(job.job_id)
 
-    res = search_video(query="backpropagation", source="test.mp4")
+    res = search_video(query="backpropagation", job_id=job.job_id)
     assert isinstance(res, dict)
     assert res["matches_count"] == 1
     assert res["matches"][0]["start_seconds"] == 65.0
     assert res["matches"][0]["formatted_time"] == "01:05"
     assert "backpropagation" in res["matches"][0]["snippet"]
+    assert "coverage" in res
+    assert res["coverage"]["is_full_video"] is True
 
 
-def test_search_video_regex_and_case_sensitivity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from vidscope.backends.source import CaptionTrack, SourceInspection
+def test_search_video_regex_and_case_sensitivity() -> None:
+    from vidscope.jobs import global_job_manager
     from vidscope.mcp import search_video
 
-    track = CaptionTrack(
-        kind="manual",
-        language="en",
-        provider="test",
-        source_url=None,
-        segments=[
+    job = global_job_manager.create_job(
+        "test.mp4",
+        [(0.0, 100.0)],
+        video_duration_seconds=100.0,
+    )
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "summary": "Errors"},
+        completed_chunks=1,
+        transcript_segments=[
             {
                 "start_seconds": 10.0,
                 "end_seconds": 15.0,
@@ -347,24 +346,15 @@ def test_search_video_regex_and_case_sensitivity(
             },
         ],
     )
-    monkeypatch.setattr(
-        "vidscope.backends.source.SourceInspector.inspect",
-        lambda self, req: SourceInspection(
-            source="test", is_url=False, duration_seconds=100.0
-        ),
-    )
-    monkeypatch.setattr(
-        "vidscope.backends.source.CaptionResolver.resolve",
-        lambda self, insp, req: track,
-    )
+    global_job_manager.complete_job(job.job_id)
 
     # Regex test
-    res = search_video(query=r"Error \d+", source="test.mp4", is_regex=True)
+    res = search_video(query=r"Error \d+", job_id=job.job_id, is_regex=True)
     assert isinstance(res, dict)
     assert res["matches_count"] == 2
 
     # Case-sensitive test
-    res_case = search_video(query="Error", source="test.mp4", case_sensitive=True)
+    res_case = search_video(query="Error", job_id=job.job_id, case_sensitive=True)
     assert isinstance(res_case, dict)
     assert res_case["matches_count"] == 1
     assert res_case["matches"][0]["start_seconds"] == 10.0
@@ -375,7 +365,7 @@ def test_search_video_empty_query_returns_error() -> None:
 
     from vidscope.mcp import search_video
 
-    res = search_video(query="   ", source="test.mp4")
+    res = search_video(query="   ", job_id="job_123")
     assert isinstance(res, ToolResult)
     assert res.is_error is True
 
@@ -385,7 +375,7 @@ def test_search_video_invalid_regex_returns_error() -> None:
 
     from vidscope.mcp import search_video
 
-    res = search_video(query="[unclosed-regex", source="test.mp4", is_regex=True)
+    res = search_video(query="[unclosed-regex", job_id="job_123", is_regex=True)
     assert isinstance(res, ToolResult)
     assert res.is_error is True
 
@@ -408,6 +398,7 @@ def test_search_video_job_id_transcript() -> None:
             {"start_seconds": 25.0, "end_seconds": 30.0, "text": "Attention mechanism"},
         ],
     )
+    global_job_manager.complete_job(job.job_id)
     res = search_video(query="Attention", job_id=job.job_id)
     assert isinstance(res, dict)
     assert res["matches_count"] == 1
@@ -590,37 +581,21 @@ def test_get_job_status_failed_returns_tool_result() -> None:
     assert res.is_error is True
 
 
-def test_search_video_language_support(monkeypatch: pytest.MonkeyPatch) -> None:
-    from vidscope.backends.source import CaptionTrack, SourceInspection
+def test_search_video_rejects_inflight_processing_job() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.jobs import global_job_manager
     from vidscope.mcp import search_video
 
-    track_es = CaptionTrack(
-        kind="manual",
-        language="es",
-        provider="test",
-        source_url=None,
-        segments=[
-            {"start_seconds": 5.0, "end_seconds": 10.0, "text": "Hola mundo"},
-        ],
-    )
-    monkeypatch.setattr(
-        "vidscope.backends.source.SourceInspector.inspect",
-        lambda self, req: SourceInspection(
-            source="test",
-            is_url=False,
-            duration_seconds=100.0,
-            caption_tracks=[track_es],
-        ),
-    )
-    monkeypatch.setattr(
-        "vidscope.backends.source.CaptionResolver.resolve",
-        lambda self, insp, req: track_es if req.get("language") == "es" else None,
-    )
-
-    res_es = search_video(query="Hola", source="test.mp4", language="es")
-    assert isinstance(res_es, dict)
-    assert res_es["matches_count"] == 1
-    assert res_es["matches"][0]["snippet"] == "Hola mundo"
+    job = global_job_manager.create_job("test_inflight", [(0.0, 30.0), (30.0, 60.0)])
+    res = search_video(query="something", job_id=job.job_id)
+    assert isinstance(res, ToolResult)
+    assert res.is_error is True
+    assert res.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert res.structured_content["retryable"] is True
+    assert res.structured_content["next_action"] == "get_job_status"
+    assert res.structured_content["retry_after_seconds"] > 0
 
 
 def test_analyze_video_idempotency_returns_existing_job(
@@ -694,25 +669,26 @@ def test_view_frame_mutual_exclusivity_and_validation() -> None:
     assert res4.structured_content["code"] == ErrorCode.INVALID_REQUEST
 
 
-def test_search_video_mutual_exclusivity_and_validation() -> None:
+def test_search_video_job_validation_and_not_found() -> None:
     from fastmcp.tools.base import ToolResult
 
     from vidscope.contracts import ErrorCode
+    from vidscope.jobs import global_job_manager
     from vidscope.mcp import search_video
 
-    # Both source and job_id
-    res1 = search_video(query="hello", source="test.mp4", job_id="job_123")
+    # Missing / non-existent job_id
+    res1 = search_video(query="hello", job_id="nonexistent_job_999")
     assert isinstance(res1, ToolResult)
     assert res1.is_error is True
-    assert res1.structured_content["code"] == ErrorCode.INVALID_REQUEST
-    assert "Cannot provide both" in res1.structured_content["message"]
+    assert res1.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
 
-    # Neither source nor job_id
-    res2 = search_video(query="hello")
+    # Failed job
+    failed_job = global_job_manager.create_job("failed_src", [(0.0, 10.0)])
+    global_job_manager.fail_job(failed_job.job_id, "decoder crash")
+    res2 = search_video(query="hello", job_id=failed_job.job_id)
     assert isinstance(res2, ToolResult)
     assert res2.is_error is True
-    assert res2.structured_content["code"] == ErrorCode.INVALID_REQUEST
-    assert "Must provide either" in res2.structured_content["message"]
+    assert res2.structured_content["code"] == ErrorCode.INTERNAL_STAGE_FAILED
 
 
 def test_server_info_static_resource() -> None:
@@ -754,106 +730,76 @@ def test_analyze_video_schema_constraints() -> None:
         assert chunk_prop.get("exclusiveMinimum") == 0.0
 
 
-def test_search_video_language_normalization_and_validation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from fastmcp.tools.base import ToolResult
-
-    from vidscope.backends.source import CaptionTrack, SourceInspection
-    from vidscope.contracts import ErrorCode
+def test_search_video_zero_matches_hints() -> None:
+    from vidscope.jobs import global_job_manager
     from vidscope.mcp import search_video
 
-    mock_track = CaptionTrack(
-        kind="manual",
-        language="en",
-        provider="test",
-        source_url="http://test",
-        segments=[{"text": "learning deep learning", "start": 1.0, "end": 2.0}],
+    # 1. Zero matches with transcript present
+    job1 = global_job_manager.create_job(
+        "video1.mp4", [(0.0, 60.0)], video_duration_seconds=60.0
     )
-    mock_inspection = SourceInspection(
-        source="https://example.com/video.mp4",
-        is_url=True,
-        duration_seconds=60.0,
-        caption_tracks=[mock_track],
-        streams=[],
-        metadata={},
+    global_job_manager.update_job_progress(
+        job1.job_id,
+        section={"chunk_index": 1, "summary": "Intro"},
+        completed_chunks=1,
+        transcript_segments=[
+            {"start_seconds": 0.0, "end_seconds": 10.0, "text": "hello world"}
+        ],
     )
+    global_job_manager.complete_job(job1.job_id)
 
-    monkeypatch.setattr(
-        "vidscope.mcp.SourceInspector.inspect",
-        lambda self, req: mock_inspection,
-    )
-    monkeypatch.setattr(
-        "vidscope.mcp.CaptionResolver.resolve",
-        lambda self, insp, req: mock_track if req.get("language") == "en" else None,
-    )
+    res1 = search_video(query="kubernetes", job_id=job1.job_id)
+    assert isinstance(res1, dict)
+    assert res1["matches_count"] == 0
+    assert "No transcript matches found" in res1["hint"]
 
-    # 1. Full language name "english" normalizes to "en" and matches
-    res1 = search_video(
-        query="learning",
-        source="https://example.com/video.mp4",
-        language="english",
+    # 2. Zero matches in visual-only job (no transcript)
+    job2 = global_job_manager.create_job(
+        "video2.mp4", [(0.0, 60.0)], video_duration_seconds=60.0
     )
-    assert not isinstance(res1, ToolResult)
-    assert res1["language"] == "en"
-    assert res1["matches_count"] == 1
+    global_job_manager.update_job_progress(
+        job2.job_id,
+        section={"chunk_index": 1, "summary": "Visuals"},
+        completed_chunks=1,
+        transcript_segments=[],
+    )
+    global_job_manager.complete_job(job2.job_id)
 
-    # 2. Invalid language string rejected as INVALID_REQUEST
-    res2 = search_video(
-        query="learning",
-        source="https://example.com/video.mp4",
-        language="invalid language with $$$",
-    )
-    assert isinstance(res2, ToolResult)
-    assert res2.is_error is True
-    assert res2.structured_content["code"] == ErrorCode.INVALID_REQUEST
-    assert "Unsupported or invalid language" in res2.structured_content["message"]
+    res2 = search_video(query="kubernetes", job_id=job2.job_id)
+    assert isinstance(res2, dict)
+    assert res2["matches_count"] == 0
+    assert "visual-only" in res2["hint"]
 
 
-def test_search_video_remote_caption_failure_informative_message(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from fastmcp.tools.base import ToolResult
-
-    from vidscope.backends.source import CaptionTrack, SourceInspection
+def test_search_video_windowed_coverage_metadata() -> None:
+    from vidscope.jobs import global_job_manager
     from vidscope.mcp import search_video
 
-    mock_meta_track = CaptionTrack(
-        kind="manual",
-        language="en",
-        provider="yt-dlp",
-        source_url="https://youtube.com/timedtext?v=123",
-        segments=[],
+    # Windowed analysis: analyzed seconds 30 to 60 of a 300-second video
+    job = global_job_manager.create_job(
+        "video_long.mp4",
+        [(30.0, 60.0)],
+        video_duration_seconds=300.0,
     )
-    mock_inspection = SourceInspection(
-        source="https://www.youtube.com/watch?v=123",
-        is_url=True,
-        duration_seconds=60.0,
-        caption_tracks=[mock_meta_track],
-        streams=[],
-        metadata={},
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "summary": "Segment 30-60"},
+        completed_chunks=1,
+        transcript_segments=[
+            {"start_seconds": 40.0, "end_seconds": 45.0, "text": "quantum computing"}
+        ],
     )
+    global_job_manager.complete_job(job.job_id)
 
-    monkeypatch.setattr(
-        "vidscope.mcp.SourceInspector.inspect",
-        lambda self, req: mock_inspection,
-    )
-    monkeypatch.setattr(
-        "vidscope.mcp.CaptionResolver.resolve",
-        lambda self, insp, req: None,
-    )
-
-    res = search_video(
-        query="test",
-        source="https://www.youtube.com/watch?v=123",
-        language="en",
-    )
-    assert not isinstance(res, ToolResult)
-    assert res["matches_count"] == 0
-    # Must explain that the track exists in metadata but could not be downloaded
-    assert "is listed in video metadata" in res["message"]
-    assert "remote provider" in res["message"]
-    assert "analyze_video" in res["message"]
+    res = search_video(query="quantum", job_id=job.job_id)
+    assert isinstance(res, dict)
+    assert res["matches_count"] == 1
+    cov = res["coverage"]
+    assert cov["is_full_video"] is False
+    assert cov["analyzed_start_seconds"] == 30.0
+    assert cov["analyzed_end_seconds"] == 60.0
+    assert cov["analyzed_duration_seconds"] == 30.0
+    assert cov["video_duration_seconds"] == 300.0
 
 
 def test_job_status_continuation_contract_and_cursor() -> None:
@@ -881,6 +827,9 @@ def test_job_status_continuation_contract_and_cursor() -> None:
     assert poll0["has_more"] is True
     assert poll0["timeline_chunks_returned"] == 1
     assert "Job is processing" in poll0["message"]
+    assert poll0["next_action"] == "get_job_status"
+    assert poll0["retry_after_seconds"] > 0
+    assert "coverage" in poll0
 
     # Poll with since_chunk=1 (empty incremental response)
     poll1 = job.to_dict(since_chunk=1)
@@ -898,6 +847,8 @@ def test_job_status_continuation_contract_and_cursor() -> None:
     assert poll2["has_more"] is False
     assert poll2["timeline_chunks_returned"] == 1
     assert "Analysis completed successfully" in poll2["message"]
+    assert poll2["next_action"] is None
+    assert "coverage" in poll2
 
 
 def test_tool_schema_oneof_exclusivity() -> None:
@@ -919,10 +870,8 @@ def test_tool_schema_oneof_exclusivity() -> None:
 
         sv = tool_map["search_video"]
         params_sv = getattr(sv, "parameters", {})
-        assert "oneOf" in params_sv
-        sv_reqs = [set(o.get("required", [])) for o in params_sv["oneOf"]]
-        assert {"query", "source"} in sv_reqs
-        assert {"query", "job_id"} in sv_reqs
+        assert "oneOf" not in params_sv
+        assert set(params_sv.get("required", [])) >= {"job_id", "query"}
 
 
 def test_mcp_prompt_registration_and_discovery() -> None:

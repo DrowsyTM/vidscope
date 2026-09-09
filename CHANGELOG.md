@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `analyze_video`: Unified video analysis entry point with sync-then-async fallback (<5s sync window for fast timeline return; background handoff with ETA and `job_id` for longer runs).
   - `get_job_status`: Incremental streaming job status with cursor pagination (`since_chunk`) to prevent context window token bloat.
   - `view_frame`: Native MCP `Image` content block delivery (`image/jpeg`) with inline OCR and timestamp metadata.
-  - `search_video`: Video grep engine supporting regex and case-sensitive matching across native captions (`source`) or analyzed speech transcripts (`job_id`).
+  - `search_video`: Post-analysis transcript grep engine supporting substring and regex matching across analyzed speech transcripts (`job_id`).
 - Thread-safe in-memory `JobManager` with completion signaling (`completed_event`), incremental cursor pagination, transcript accumulation, and automatic 2-hour TTL cleanup.
 - Integrated `curl-cffi` and `bgutil-ytdlp-pot-provider` dependencies for browser TLS fingerprint impersonation and Proof-of-Origin (PO) token generation.
 - Replaced persistent Docker PO container with native on-demand script provider (`bgutil:script-node` via `generate_once.js`), eliminating persistent background containers.
@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added ASR accuracy evaluation benchmark (`benchmarks/test_asr_accuracy.py`) calculating Word Error Rate (WER) and timestamp drift against reference transcripts.
 
 ### Changed
+- Refactored `search_video` to be strictly post-analysis (`job_id` required; removed `source` and `language`), eliminating upfront agent bypass antipatterns and token-wasting caption fetch attempts.
+- Enforced strict completion gating on `search_video`, rejecting in-flight jobs (`status != "completed"`) with typed `retryable=True` errors, `retry_after_seconds`, and `next_action="get_job_status"` to eliminate false negatives and agent hallucinations.
+- Added structured timeline coverage metadata (`coverage`: `is_full_video`, `analyzed_start_seconds`, `analyzed_end_seconds`, `analyzed_duration_seconds`, `video_duration_seconds`) across `analyze_video`, `get_job_status`, and `search_video` to explicitly distinguish partial window analyses from whole-video coverage.
+- Stripped conversational filler and narrative prose across MCP tools (`analyze_video`, `get_job_status`, `search_video`), replacing verbose summaries with dense, agent-first structured keys (`next_action`, `retry_after_seconds`, `coverage`) and concise hints.
 - Disabled remote YouTube-native caption fetching in favor of direct local Whisper ASR for all YouTube sources, preventing rate-limiting (429) errors, avoiding video-only stream selection during media acquisition, and eliminating premature fallback to visual-only summaries.
 - Enhanced `CaptionResolver` to utilize `curl_cffi` browser sessions with Chrome impersonation and cookie jar integration.
 - Upgraded `FasterWhisperBackend` with dynamic device, compute type, and language-aware model resolution.

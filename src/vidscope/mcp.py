@@ -22,10 +22,8 @@ from pydantic import ValidationError as PydanticValidationError
 from .artifacts import ArtifactStore, ArtifactStoreFailure, read_artifact_resource
 from .backends.ocr import TesseractBackend
 from .backends.source import (
-    CaptionResolver,
     SourceBackendFailure,
     SourceInspector,
-    _choose_track,
 )
 from .contracts import (
     AnalysisError,
@@ -114,41 +112,6 @@ def _get_host_capabilities() -> dict[str, bool]:
         "local_asr_available": has_faster_whisper and has_silero_vad,
         "local_ocr_available": has_tesseract,
     }
-
-
-_COMMON_LANGUAGE_NAMES: dict[str, str] = {
-    "english": "en",
-    "spanish": "es",
-    "french": "fr",
-    "german": "de",
-    "italian": "it",
-    "portuguese": "pt",
-    "russian": "ru",
-    "chinese": "zh",
-    "mandarin": "zh",
-    "cantonese": "zh-yue",
-    "japanese": "ja",
-    "korean": "ko",
-    "arabic": "ar",
-    "hindi": "hi",
-    "bengali": "bn",
-    "dutch": "nl",
-    "polish": "pl",
-    "turkish": "tr",
-    "ukrainian": "uk",
-    "vietnamese": "vi",
-    "greek": "el",
-    "hebrew": "he",
-    "swedish": "sv",
-    "norwegian": "no",
-    "danish": "da",
-    "finnish": "fi",
-    "indonesian": "id",
-    "thai": "th",
-    "czech": "cs",
-    "romanian": "ro",
-    "hungarian": "hu",
-}
 
 
 def _error_payload(error: AnalysisError) -> dict[str, Any]:
@@ -269,14 +232,16 @@ def _process_job_chunks(
 
     try:
         resolved_end = end_seconds
+        video_duration: float | None = None
+        try:
+            inspector = SourceInspector()
+            inspection = inspector.inspect({"source": source})
+            video_duration = inspection.duration_seconds
+        except Exception as exc:
+            logger.warning("Job %s duration inspection failed: %s", job_id, exc)
+
         if resolved_end is None:
-            try:
-                inspector = SourceInspector()
-                inspection = inspector.inspect({"source": source})
-                resolved_end = inspection.duration_seconds
-            except Exception as exc:
-                logger.warning("Job %s duration inspection failed: %s", job_id, exc)
-                resolved_end = None
+            resolved_end = video_duration
 
         if resolved_end is None or resolved_end <= start_seconds:
             resolved_end = start_seconds + chunk_duration_seconds
@@ -288,7 +253,11 @@ def _process_job_chunks(
             chunk_ranges.append((curr, nxt))
             curr = nxt
 
-        global_job_manager.set_job_chunks(job_id, chunk_ranges)
+        global_job_manager.set_job_chunks(
+            job_id,
+            chunk_ranges,
+            video_duration_seconds=video_duration,
+        )
 
         for index, (start_sec, end_sec) in enumerate(chunk_ranges, start=1):
             with tempfile.TemporaryDirectory(
@@ -464,10 +433,8 @@ def _process_job_chunks(
                             "OCR unavailable (tesseract binary not installed on host)."
                         )
                     summary_text = (
-                        f"Visual keyframes extracted ({len(keyframes)} frames between "
-                        f"{format_timestamp(start_sec)} and {format_timestamp(end_sec)}). "
-                        f"Speech transcript unavailable for this chunk. {ocr_summary} "
-                        "Call view_frame(frame_id) to inspect frames."
+                        f"Visual keyframes ({len(keyframes)} frames, "
+                        f"{format_timestamp(start_sec)}-{format_timestamp(end_sec)}). {ocr_summary}"
                     )
 
                 section = {
@@ -601,12 +568,13 @@ def analyze_video(
                 "source": source,
                 "start_seconds": start_seconds,
                 "end_seconds": resolved_end,
+                "coverage": job.coverage(),
                 "total_chunks": job.total_chunks,
                 "completed_chunks": job.completed_chunks,
                 "next_since_chunk": len(job.available_sections),
                 "has_more": False,
                 "timeline": job.available_sections,
-                "hint": "Call view_frame(frame_id='<frame_id>') to inspect any keyframe image directly in conversation context.",
+                "hint": "Use search_video(job_id=...) to search transcript or view_frame(frame_id=...) to inspect frames.",
             }
 
         if job.status == "failed":
@@ -625,22 +593,26 @@ def analyze_video(
         processing_end: float | None = (
             job.chunks[-1]["end_seconds"] if job.chunks else end_seconds
         )
+        remaining = max(
+            1.0,
+            round(job.last_estimated_remaining or job.estimated_total_seconds, 1),
+        )
         return {
             "status": "processing",
             "job_id": job.job_id,
             "source": source,
             "start_seconds": start_seconds,
             "end_seconds": processing_end,
+            "coverage": job.coverage(),
             "total_chunks": job.total_chunks,
             "completed_chunks": job.completed_chunks,
             "next_since_chunk": len(job.available_sections),
             "has_more": True,
+            "next_action": "get_job_status",
+            "retry_after_seconds": remaining,
             "estimated_completion_seconds": round(job.estimated_total_seconds, 1),
             "initial_timeline": job.available_sections,
-            "message": (
-                f"Analysis is processing in the background (estimated ~{int(job.estimated_total_seconds)}s). "
-                f"Call get_job_status(job_id='{job.job_id}', since_chunk={len(job.available_sections)}) to check progress and retrieve timeline sections."
-            ),
+            "hint": f"Poll get_job_status(job_id='{job.job_id}', since_chunk={len(job.available_sections)})",
         }
     except (VideoAnalyzerFailure, SourceBackendFailure) as exc:
         payload = _error_payload(exc.error)
@@ -927,28 +899,14 @@ def view_frame(
     annotations={"readOnlyHint": True, "idempotentHint": True},
 )
 def search_video(
+    job_id: Annotated[
+        str,
+        Field(description="Analysis job ID from analyze_video to search transcript"),
+    ],
     query: Annotated[
         str,
-        Field(description="Text or regex pattern to search for in captions/transcript"),
+        Field(description="Text or regex pattern to search for in transcript"),
     ],
-    source: Annotated[
-        str | None,
-        Field(
-            description="Video URL or path to search native captions (mutually exclusive with job_id)",
-        ),
-    ] = None,
-    job_id: Annotated[
-        str | None,
-        Field(
-            description="Analysis job ID to search generated transcript (mutually exclusive with source)",
-        ),
-    ] = None,
-    language: Annotated[
-        str | None,
-        Field(
-            description="Optional subtitle language code (e.g. 'en', 'es') for native captions",
-        ),
-    ] = None,
     is_regex: Annotated[
         bool,
         Field(description="Whether to treat query as a regular expression"),
@@ -962,58 +920,11 @@ def search_video(
         Field(gt=0, description="Maximum number of matches to return"),
     ] = 20,
 ) -> dict[str, Any] | ToolResult:
-    """Grep across video subtitles or analyzed transcript with optional regex matching.
+    """Search the transcript of an analyzed video using job_id.
 
-    Can search native captions upfront using source, or search the ASR transcript of an
-    analyzed video using job_id.
+    Requires a completed analysis job to prevent false negatives.
+    Supports substring and regex matching.
     """
-    if source is not None and job_id is not None:
-        error = AnalysisError(
-            code=ErrorCode.INVALID_REQUEST,
-            stage="search_video",
-            message="Cannot provide both 'source' and 'job_id'. Provide 'source' to search native captions, or 'job_id' to search analyzed transcript.",
-            retryable=False,
-        )
-        payload = _error_payload(error)
-        return ToolResult(content=payload, structured_content=payload, is_error=True)
-
-    if source is None and job_id is None:
-        error = AnalysisError(
-            code=ErrorCode.INVALID_REQUEST,
-            stage="search_video",
-            message="Must provide either source (for native captions) or job_id (for analyzed transcript)",
-            retryable=False,
-        )
-        payload = _error_payload(error)
-        return ToolResult(content=payload, structured_content=payload, is_error=True)
-
-    if language is not None:
-        raw_lang = language.strip()
-        cleaned_lang = raw_lang.lower()
-        if not cleaned_lang:
-            target_lang = "en"
-        elif cleaned_lang in _COMMON_LANGUAGE_NAMES:
-            target_lang = _COMMON_LANGUAGE_NAMES[cleaned_lang]
-        elif re.match(r"^[a-zA-Z]{2,3}(-[a-zA-Z0-9]+)?$", cleaned_lang):
-            target_lang = cleaned_lang
-        else:
-            error = AnalysisError(
-                code=ErrorCode.INVALID_REQUEST,
-                stage="search_video",
-                message=(
-                    f"Unsupported or invalid language code '{language}'. "
-                    "Provide a valid ISO language code (e.g. 'en', 'es', 'fr') "
-                    "or standard language name ('english', 'spanish')."
-                ),
-                retryable=False,
-            )
-            payload = _error_payload(error)
-            return ToolResult(
-                content=payload, structured_content=payload, is_error=True
-            )
-    else:
-        target_lang = "en"
-
     cleaned_query = query.strip()
     if not cleaned_query:
         error = AnalysisError(
@@ -1042,120 +953,59 @@ def search_video(
         payload = _error_payload(error)
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
-    segments_to_search: list[dict[str, Any]] = []
+    job = global_job_manager.get_job(job_id)
+    if job is None:
+        error = AnalysisError(
+            code=ErrorCode.ARTIFACT_NOT_FOUND,
+            stage="search_video",
+            message=f"Job '{job_id}' was not found or has expired.",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
 
-    if job_id is not None:
-        job = global_job_manager.get_job(job_id)
-        if job is None:
-            error = AnalysisError(
-                code=ErrorCode.ARTIFACT_NOT_FOUND,
-                stage="search_video",
-                message=f"Job '{job_id}' was not found or has expired.",
-                retryable=False,
-            )
-            payload = _error_payload(error)
-            return ToolResult(
-                content=payload, structured_content=payload, is_error=True
-            )
+    if job.status == "failed":
+        error = AnalysisError(
+            code=ErrorCode.INTERNAL_STAGE_FAILED,
+            stage="search_video",
+            message=job.error or "Analysis job failed.",
+            retryable=False,
+        )
+        payload = _error_payload(error)
+        payload["job_id"] = job_id
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
 
-        if not job.full_transcript:
-            return {
-                "query": query,
+    if job.status != "completed":
+        remaining = (
+            max(1.0, round(job.last_estimated_remaining, 1))
+            if job.last_estimated_remaining > 0
+            else max(1.0, round(job.estimated_total_seconds, 1))
+        )
+        error = AnalysisError(
+            code=ErrorCode.INVALID_REQUEST,
+            stage="search_video",
+            message=(
+                f"Job '{job_id}' is still processing ({round(job.progress_percentage)}% complete). "
+                "search_video requires a completed job to prevent false-negative searches."
+            ),
+            retryable=True,
+            diagnostics={
                 "job_id": job_id,
-                "matches_count": 0,
-                "matches": [],
-                "message": (
-                    f"No transcript segments available yet for job '{job_id}' "
-                    f"(status: '{job.status}')."
-                ),
-            }
-        segments_to_search = job.full_transcript
-
-    else:
-        try:
-            inspector = SourceInspector()
-            inspection = inspector.inspect({"source": source})
-            resolver = CaptionResolver()
-            track = resolver.resolve(inspection, {"language": target_lang})
-
-            if track is None or not track.segments:
-                available_tracks = [t for t in inspection.caption_tracks if t.language]
-                matching_track = _choose_track(inspection.caption_tracks, target_lang)
-                if matching_track is not None:
-                    msg = (
-                        f"Native caption track for '{target_lang}' ({matching_track.language}, {matching_track.kind}) "
-                        "is listed in video metadata, but native caption retrieval from the remote provider is disabled "
-                        "(relying on faster, more reliable local Whisper ASR). "
-                        "Call analyze_video(source) to transcribe and analyze the video, "
-                        "then search with job_id once analyzed."
-                    )
-                else:
-                    manual_langs = sorted(
-                        set(t.language for t in available_tracks if t.kind == "manual")
-                    )
-                    auto_langs = sorted(
-                        set(t.language for t in available_tracks if t.kind != "manual")
-                    )
-                    if manual_langs:
-                        summary_langs = f"available manual tracks: {manual_langs[:10]}"
-                    elif auto_langs:
-                        priority = [
-                            "en",
-                            "es",
-                            "fr",
-                            "de",
-                            "zh",
-                            "ja",
-                            "ru",
-                            "pt",
-                            "it",
-                            "ar",
-                            "hi",
-                        ]
-                        sampled = [
-                            lang_code
-                            for lang_code in priority
-                            if any(a.lower().startswith(lang_code) for a in auto_langs)
-                        ]
-                        if not sampled:
-                            sampled = auto_langs[:8]
-                        summary_langs = f"available tracks: {sampled}"
-                    else:
-                        summary_langs = "no caption tracks found on video"
-
-                    msg = (
-                        f"No native captions available for source in language '{target_lang}' ({summary_langs}). "
-                        "Call analyze_video(source) to transcribe or visually analyze the video, "
-                        "then search with job_id."
-                    )
-                return {
-                    "source": source,
-                    "query": query,
-                    "language": target_lang,
-                    "matches_count": 0,
-                    "matches": [],
-                    "message": msg,
-                }
-            segments_to_search = track.segments
-        except (VideoAnalyzerFailure, SourceBackendFailure) as exc:
-            payload = _error_payload(exc.error)
-            return ToolResult(
-                content=payload, structured_content=payload, is_error=True
-            )
-        except Exception as exc:
-            error = AnalysisError(
-                code=ErrorCode.INTERNAL_STAGE_FAILED,
-                stage="search_video",
-                message=str(exc)[:2_048] or "search failed",
-                retryable=False,
-            )
-            payload = _error_payload(error)
-            return ToolResult(
-                content=payload, structured_content=payload, is_error=True
-            )
+                "status": job.status,
+                "progress_percentage": round(job.progress_percentage, 1),
+                "completed_chunks": job.completed_chunks,
+                "total_chunks": job.total_chunks,
+                "retry_after_seconds": remaining,
+                "next_action": "get_job_status",
+            },
+        )
+        payload = _error_payload(error)
+        payload["retry_after_seconds"] = remaining
+        payload["next_action"] = "get_job_status"
+        return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     matches: list[dict[str, Any]] = []
-    for seg in segments_to_search:
+    for seg in job.full_transcript:
         text = str(seg.get("text") or "").strip()
         if pattern.search(text):
             start_val = seg.get("start_seconds")
@@ -1175,17 +1025,27 @@ def search_video(
             if len(matches) >= max(1, max_matches):
                 break
 
-    res = {
+    coverage_meta = job.coverage()
+    res: dict[str, Any] = {
+        "job_id": job_id,
         "query": query,
         "is_regex": is_regex,
         "case_sensitive": case_sensitive,
-        "target": "job" if job_id else "source",
-        "target_id": job_id or source,
+        "coverage": coverage_meta,
         "matches_count": len(matches),
         "matches": matches,
     }
-    if source is not None:
-        res["language"] = target_lang
+    if len(matches) == 0:
+        if not job.full_transcript:
+            res["hint"] = (
+                "Job has no speech transcript (visual-only analysis). "
+                "Call view_frame(frame_id=...) to inspect frames."
+            )
+        else:
+            res["hint"] = (
+                f"No transcript matches found for '{query}' in analyzed range "
+                f"({coverage_meta['analyzed_start_seconds']}s - {coverage_meta['analyzed_end_seconds']}s)."
+            )
     return res
 
 
@@ -1252,9 +1112,9 @@ def analyze_video_workflow(source: str) -> str:
 def search_video_workflow(source: str, query: str) -> str:
     """Step-by-step guidance for locating spoken keywords or topics in a video."""
     return f"""To search for '{query}' in '{source}':
-1. Run search_video(source='{source}', query='{query}') to check for native subtitle matches.
-2. If remote captions are rate-limited or unavailable, start analyze_video(source='{source}').
-3. Once chunks complete, search the analyzed transcript using search_video(job_id='...', query='{query}').
+1. Start analysis with analyze_video(source='{source}').
+2. If background processing, poll get_job_status(job_id=...) until completed.
+3. Once completed, search the transcript with search_video(job_id='...', query='{query}').
 4. Inspect matching frames using view_frame(source='{source}', timestamp_seconds=match['start_seconds']).
 """
 
@@ -1303,12 +1163,6 @@ def _configure_tool_schemas() -> None:
                 vf.parameters["oneOf"] = [
                     {"required": ["frame_id"]},
                     {"required": ["source", "timestamp_seconds"]},
-                ]
-            sv = await mcp.get_tool("search_video")
-            if sv and hasattr(sv, "parameters") and isinstance(sv.parameters, dict):
-                sv.parameters["oneOf"] = [
-                    {"required": ["query", "source"]},
-                    {"required": ["query", "job_id"]},
                 ]
 
         if loop and loop.is_running():
