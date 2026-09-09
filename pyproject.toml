@@ -30,6 +30,8 @@ dependencies = [
   "typer>=0.12",
   "yt-dlp>=2025.1.0",
   "youtube-transcript-api>=1.2.0",
+  "curl-cffi>=0.7.0",
+  "bgutil-ytdlp-pot-provider>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -110,7 +112,7 @@ check_untyped_defs = true
 module = "tests.*"
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
-disable_error_code = ["arg-type", "attr-defined", "no-untyped-def", "misc", "assignment"]
+disable_error_code = ["arg-type", "attr-defined", "no-untyped-def", "misc", "assignment", "index"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -118,6 +120,7 @@ module = [
   "silero_vad.*",
   "yt_dlp.*",
   "youtube_transcript_api.*",
+  "curl_cffi.*",
 ]
 ignore_missing_imports = true
 

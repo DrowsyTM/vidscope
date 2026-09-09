@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -25,7 +26,7 @@ import urllib.request
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from ..contracts import (
     AnalysisError,
@@ -851,6 +852,17 @@ class SourceInspector:
             "getcomments": False,
             "logger": _MuffledLogger(),
         }
+        node_bin = shutil.which("node")
+        if node_bin:
+            options["js_runtimes"] = {"node": {"path": node_bin}}
+        cookies_file = _settings_value(self.settings, "cookies_file", None)
+        if not cookies_file:
+            with contextlib.suppress(Exception):
+                from ..settings import get_settings
+
+                cookies_file = getattr(get_settings(), "cookies_file", None)
+        if cookies_file and Path(cookies_file).is_file():
+            options["cookiefile"] = str(cookies_file)
         try:
             with _yt_env():
                 info = self._extract_info(source, options)
@@ -1210,7 +1222,25 @@ class CaptionResolver:
             try:
                 from youtube_transcript_api import YouTubeTranscriptApi
 
-                provider = YouTubeTranscriptApi()
+                try:
+                    from curl_cffi.requests import Session as CurlSession
+
+                    session: Any = CurlSession(impersonate="chrome124")
+                    cookies_file = _settings_value(self.settings, "cookies_file", None)
+                    if not cookies_file:
+                        with contextlib.suppress(Exception):
+                            from ..settings import get_settings
+
+                            cookies_file = getattr(get_settings(), "cookies_file", None)
+                    if cookies_file and Path(cookies_file).is_file():
+                        import http.cookiejar
+
+                        cj = http.cookiejar.MozillaCookieJar(str(cookies_file))
+                        cj.load(ignore_discard=True, ignore_expires=True)
+                        session.cookies.update(cj)
+                    provider = YouTubeTranscriptApi(http_client=cast(Any, session))
+                except Exception:
+                    provider = YouTubeTranscriptApi()
             except (ImportError, ModuleNotFoundError):
                 return None
             except Exception:
@@ -1320,6 +1350,39 @@ class CaptionResolver:
                         return target(track.source_url)
                     except Exception:
                         return None
+        cookies_file = _settings_value(self.settings, "cookies_file", None)
+        if not cookies_file:
+            with contextlib.suppress(Exception):
+                from ..settings import get_settings
+
+                cookies_file = getattr(get_settings(), "cookies_file", None)
+
+        try:
+            from curl_cffi import requests as curl_requests
+
+            session: Any = curl_requests.Session(impersonate="chrome124")
+            if cookies_file and Path(cookies_file).is_file():
+                import http.cookiejar
+
+                cj = http.cookiejar.MozillaCookieJar(str(cookies_file))
+                cj.load(ignore_discard=True, ignore_expires=True)
+                session.cookies.update(cj)
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Referer": "https://www.youtube.com/",
+            }
+            curl_res = session.get(track.source_url, headers=headers, timeout=20)
+            if curl_res.status_code == 200:
+                payload = curl_res.content[: self.max_caption_bytes + 1]
+                if len(payload) <= self.max_caption_bytes:
+                    return payload
+        except Exception:
+            pass
+
         request = urllib.request.Request(
             track.source_url, headers={"User-Agent": "vidscope/0.1"}
         )
@@ -1727,6 +1790,17 @@ class MediaAcquirer:
             "socket_timeout": timeout_seconds,
             "logger": _MuffledLogger(),
         }
+        node_bin = shutil.which("node")
+        if node_bin:
+            options["js_runtimes"] = {"node": {"path": node_bin}}
+        cookies_file = _settings_value(self.settings, "cookies_file", None)
+        if not cookies_file:
+            with contextlib.suppress(Exception):
+                from ..settings import get_settings
+
+                cookies_file = getattr(get_settings(), "cookies_file", None)
+        if cookies_file and Path(cookies_file).is_file():
+            options["cookiefile"] = str(cookies_file)
         # yt-dlp's Python API uses ``download_ranges`` for section-bounded
         # downloads.  Keep the textual option as a compatibility hint for
         # injected downloaders that inspect options without importing yt-dlp.

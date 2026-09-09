@@ -21,6 +21,7 @@ FFMPEG_BIN_ENV: Final = "VIDSCOPE_FFMPEG_BIN"
 FFPROBE_BIN_ENV: Final = "VIDSCOPE_FFPROBE_BIN"
 MODEL_CACHE_ENV: Final = "VIDSCOPE_MODEL_CACHE"
 ALLOWED_OUTPUT_ROOT_ENV: Final = "VIDSCOPE_ALLOWED_OUTPUT_ROOT"
+COOKIES_FILE_ENV: Final = "VIDSCOPE_COOKIES_FILE"
 LEGACY_TESSDATA_PREFIX_ENV: Final = "TESSDATA_PREFIX"
 
 
@@ -40,6 +41,7 @@ class Settings:
     ffprobe_bin: Path | None = None
     model_cache: Path | None = None
     allowed_output_root: Path | None = None
+    cookies_file: Path | None = None
     cloud_allowed: bool = False
 
     def __post_init__(self) -> None:
@@ -132,6 +134,10 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
             values.get(ALLOWED_OUTPUT_ROOT_ENV),
             variable_name=ALLOWED_OUTPUT_ROOT_ENV,
             require_absolute=True,
+        ),
+        cookies_file=_normalize_path(
+            values.get(COOKIES_FILE_ENV),
+            variable_name=COOKIES_FILE_ENV,
         ),
     )
 

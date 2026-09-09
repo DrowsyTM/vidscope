@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -230,3 +231,42 @@ def test_ssrf_rejection_for_private_and_loopback_ips(forbidden_url: str) -> None
     with pytest.raises(SourceBackendFailure) as exc_info:
         inspector.inspect({"source": forbidden_url})
     assert _code(exc_info.value) in {"SOURCE_NOT_ALLOWED", "URL_SCHEME_NOT_ALLOWED"}
+
+
+def test_settings_cookies_file_and_yt_dlp_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vidscope.settings import COOKIES_FILE_ENV, load_settings
+
+    cookies = tmp_path / "cookies.txt"
+    cookies.write_text("# Netscape HTTP Cookie File\n")
+    settings = load_settings({COOKIES_FILE_ENV: str(cookies)})
+    assert settings.cookies_file == cookies
+
+    captured: dict[str, Any] = {}
+
+    class InspectorProvider:
+        def extract_info(
+            self,
+            source: str,
+            *,
+            download: bool = False,
+            options: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            captured["options"] = options or {}
+            return {
+                "id": "abc",
+                "title": "sample",
+                "duration": 10.0,
+                "formats": [],
+                "subtitles": {},
+            }
+
+    inspector = SourceInspector(
+        yt_dlp_provider=InspectorProvider(),
+        settings=settings,
+    )
+    inspector.inspect({"source": "https://example.com/watch?v=sample"})
+    assert captured["options"].get("cookiefile") == str(cookies)
+    if shutil.which("node"):
+        assert "js_runtimes" in captured["options"]
