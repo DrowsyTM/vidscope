@@ -618,6 +618,43 @@ def _run_analysis(
                 rows = _segments(transcript)
                 if not rows:
                     raise RuntimeError("transcript artifact was empty")
+                offset = float(request.time_range.start_seconds)
+                if offset > 0:
+                    for row in rows:
+                        if "start_seconds" in row:
+                            row["start_seconds"] = round(
+                                float(row["start_seconds"]) + offset, 3
+                            )
+                        elif "start" in row:
+                            row["start_seconds"] = round(
+                                float(row.pop("start")) + offset, 3
+                            )
+                        if "end_seconds" in row:
+                            row["end_seconds"] = round(
+                                float(row["end_seconds"]) + offset, 3
+                            )
+                        elif "end" in row:
+                            row["end_seconds"] = round(
+                                float(row.pop("end")) + offset, 3
+                            )
+                        for word in row.get("words", []) or []:
+                            if isinstance(word, dict):
+                                if "start_seconds" in word:
+                                    word["start_seconds"] = round(
+                                        float(word["start_seconds"]) + offset, 3
+                                    )
+                                elif "start" in word:
+                                    word["start_seconds"] = round(
+                                        float(word.pop("start")) + offset, 3
+                                    )
+                                if "end_seconds" in word:
+                                    word["end_seconds"] = round(
+                                        float(word["end_seconds"]) + offset, 3
+                                    )
+                                elif "end" in word:
+                                    word["end_seconds"] = round(
+                                        float(word.pop("end")) + offset, 3
+                                    )
                 refs.append(
                     store.write_jsonl(
                         rows,

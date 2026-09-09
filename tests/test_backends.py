@@ -111,6 +111,7 @@ def test_faster_whisper_backend_uses_benchmarked_local_defaults(
         calls["model"] = (args, kwargs)
         return Model()
 
+    monkeypatch.setattr("vidscope.backends.asr._detect_device", lambda _: "cpu")
     result = FasterWhisperBackend(model_factory=factory).transcribe(
         audio, language="en"
     )
@@ -172,6 +173,29 @@ def test_silero_vad_backend_clamps_and_sorts_intervals(tmp_path: Path) -> None:
     ]
 
 
+def test_silero_vad_backend_handles_non_zero_chunk_offset(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"riff")
+    module = SimpleNamespace(
+        load_silero_vad=lambda onnx=False: "model",
+        read_audio=lambda path, sampling_rate=16000: (path, sampling_rate),
+        get_speech_timestamps=lambda audio_value, model, sampling_rate=16000, return_seconds=True: [
+            {"start": 5.0, "end": 15.0},
+            {"start": 170.0, "end": 190.0},
+        ],
+    )
+    result = SileroVadBackend(module=module).detect(
+        audio, start_seconds=180.0, end_seconds=360.0
+    )
+
+    assert result.intervals == [
+        {"start_seconds": 185.0, "end_seconds": 195.0},
+        {"start_seconds": 350.0, "end_seconds": 360.0},
+    ]
+
+
 def test_tesseract_backend_parses_tsv_and_retains_low_confidence(
     tmp_path: Path,
 ) -> None:
@@ -209,3 +233,123 @@ def test_tesseract_backend_maps_missing_malformed_and_empty_output(
     with pytest.raises(OcrBackendFailure) as malformed_error:
         TesseractBackend(binary="tesseract", runner=malformed).recognize(frame)
     assert _code(malformed_error.value) in {"OCR_UNAVAILABLE", "INTERNAL_STAGE_FAILED"}
+
+
+def test_faster_whisper_backend_respects_device_and_model_settings(
+    tmp_path: Path,
+) -> None:
+    from vidscope.settings import Settings
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"audio")
+    calls: dict[str, Any] = {}
+
+    class DummyModel:
+        def transcribe(self, path: str, **kwargs: Any) -> Any:
+            calls["transcribe"] = (path, kwargs)
+            segment = types.SimpleNamespace(
+                id=0,
+                start=0.0,
+                end=1.0,
+                text="testing cuda",
+                words=[],
+            )
+            info = types.SimpleNamespace(language="en", language_probability=0.99)
+            return iter([segment]), info
+
+    def factory(*args: Any, **kwargs: Any) -> DummyModel:
+        calls["model"] = (args, kwargs)
+        return DummyModel()
+
+    settings = Settings(
+        whisper_model="base",
+        whisper_device="cuda",
+        whisper_compute_type="float16",
+    )
+    result = FasterWhisperBackend(settings=settings, model_factory=factory).transcribe(
+        audio, language="en"
+    )
+
+    assert result.metadata["model"] == "base"
+    assert result.metadata["device"] == "cuda"
+    assert result.metadata["compute_type"] == "float16"
+    assert calls["model"] == (
+        ("base",),
+        {
+            "device": "cuda",
+            "compute_type": "float16",
+            "cpu_threads": 0,
+            "num_workers": 1,
+        },
+    )
+
+
+def test_faster_whisper_backend_multilingual_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"audio")
+    calls: dict[str, Any] = {}
+
+    class DummyModel:
+        def transcribe(self, path: str, **kwargs: Any) -> Any:
+            calls["transcribe"] = (path, kwargs)
+            segment = types.SimpleNamespace(
+                id=0,
+                start=0.0,
+                end=1.0,
+                text="hola",
+                words=[],
+            )
+            info = types.SimpleNamespace(language="es", language_probability=0.99)
+            return iter([segment]), info
+
+    def factory(*args: Any, **kwargs: Any) -> DummyModel:
+        calls["model"] = (args, kwargs)
+        return DummyModel()
+
+    # On CPU, non-English defaults to "tiny"
+    monkeypatch.setattr("vidscope.backends.asr._detect_device", lambda _: "cpu")
+    result_cpu = FasterWhisperBackend(model_factory=factory).transcribe(
+        audio, language="es"
+    )
+    assert result_cpu.metadata["model"] == "tiny"
+    assert calls["model"][0] == ("tiny",)
+    assert calls["transcribe"][1]["language"] == "es"
+
+    # On CUDA with >= 1GB VRAM, defaults to "base" for non-English and "base.en" for English
+    monkeypatch.setattr("vidscope.backends.asr._detect_device", lambda _: "cuda")
+    monkeypatch.setattr(
+        "vidscope.backends.asr._get_cuda_vram_bytes", lambda: 2 * 1024 * 1024 * 1024
+    )
+    result_cuda_es = FasterWhisperBackend(model_factory=factory).transcribe(
+        audio, language="es"
+    )
+    assert result_cuda_es.metadata["model"] == "base"
+    assert calls["model"][0] == ("base",)
+
+    result_cuda_en = FasterWhisperBackend(model_factory=factory).transcribe(
+        audio, language="en"
+    )
+    assert result_cuda_en.metadata["model"] == "base.en"
+    assert calls["model"][0] == ("base.en",)
+
+
+def test_settings_whisper_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vidscope.settings import (
+        WHISPER_COMPUTE_TYPE_ENV,
+        WHISPER_DEVICE_ENV,
+        WHISPER_MODEL_ENV,
+        load_settings,
+    )
+
+    settings = load_settings(
+        {
+            WHISPER_MODEL_ENV: "small",
+            WHISPER_DEVICE_ENV: "cpu",
+            WHISPER_COMPUTE_TYPE_ENV: "int8",
+        }
+    )
+    assert settings.whisper_model == "small"
+    assert settings.whisper_device == "cpu"
+    assert settings.whisper_compute_type == "int8"
