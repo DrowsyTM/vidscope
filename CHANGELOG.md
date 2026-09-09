@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added ASR accuracy evaluation benchmark (`benchmarks/test_asr_accuracy.py`) calculating Word Error Rate (WER) and timestamp drift against reference transcripts.
 
 ### Changed
+- Disabled remote YouTube-native caption fetching in favor of direct local Whisper ASR for all YouTube sources, preventing rate-limiting (429) errors, avoiding video-only stream selection during media acquisition, and eliminating premature fallback to visual-only summaries.
 - Enhanced `CaptionResolver` to utilize `curl_cffi` browser sessions with Chrome impersonation and cookie jar integration.
 - Upgraded `FasterWhisperBackend` with dynamic device, compute type, and language-aware model resolution.
 - Consolidated video analysis into a single entry point (`analyze_video`), removing duplicate paths (`get_video_timeline`, `get_video_transcript`, `start_video_analysis`).

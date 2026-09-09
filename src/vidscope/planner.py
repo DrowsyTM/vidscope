@@ -233,7 +233,18 @@ def _language_matches(track_language: object, requested: object) -> bool:
     return available.split("-", 1)[0] == wanted.split("-", 1)[0]
 
 
+def _is_youtube_source(source: str) -> bool:
+    s = source.lower()
+    return "youtube.com" in s or "youtu.be" in s or "youtube-nocookie.com" in s
+
+
 def _select_caption(inspection: object, request: AnalyzeVideoRequest) -> object | None:
+    source = _text(_field(inspection, "source", ""))
+    is_url = bool(_field(inspection, "is_url", False))
+    # Native YouTube caption pulling is disabled; rely on local ASR
+    if is_url and _is_youtube_source(source):
+        return None
+
     requested_language = _field(request, "language", "en")
     wanted_language = _normal_language(requested_language)
     candidates: list[tuple[int, int, int, object]] = []

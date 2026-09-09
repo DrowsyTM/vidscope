@@ -1084,9 +1084,9 @@ def search_video(
                 if matching_track is not None:
                     msg = (
                         f"Native caption track for '{target_lang}' ({matching_track.language}, {matching_track.kind}) "
-                        "is listed in video metadata, but could not be downloaded from the remote provider "
-                        "(remote provider rate-limiting or blocking IP requests, e.g. HTTP 429). "
-                        "Call analyze_video(source) to perform visual and audio analysis, "
+                        "is listed in video metadata, but native caption retrieval from the remote provider is disabled "
+                        "(relying on faster, more reliable local Whisper ASR). "
+                        "Call analyze_video(source) to transcribe and analyze the video, "
                         "then search with job_id once analyzed."
                     )
                 else:

@@ -1171,18 +1171,20 @@ class CaptionResolver:
     def resolve(
         self, inspection: SourceInspection, request: Any
     ) -> CaptionTrack | None:
+        source = str(getattr(inspection, "source", "") or "")
+        is_url = bool(getattr(inspection, "is_url", False))
+        is_youtube = is_url and bool(
+            _transcript_video_id(source)
+            or "youtube.com" in source.lower()
+            or "youtu.be" in source.lower()
+        )
+        # Remote YouTube caption pulling is disabled; rely on local ASR
+        if is_youtube:
+            return None
+
         requested_language = (
             _text(_mapping_value(request, "language", "en"), limit=64) or "en"
         )
-        video_id = (
-            _transcript_video_id(inspection.source) if inspection.is_url else None
-        )
-        if video_id:
-            track = self._resolve_youtube(
-                video_id, inspection.source, requested_language
-            )
-            if track is not None:
-                return track
         selected = _choose_track(inspection.caption_tracks, requested_language)
         if selected is None:
             return None
@@ -1733,7 +1735,17 @@ class MediaAcquirer:
             _text(getattr(task, "value", task)).lower()
             for task in (raw_tasks if isinstance(raw_tasks, Iterable) else (raw_tasks,))
         }
-        has_captions = bool(_mapping_value(inspection, "caption_tracks", ()))
+        source = str(getattr(inspection, "source", "") or "")
+        is_youtube = bool(
+            _transcript_video_id(source)
+            or "youtube.com" in source.lower()
+            or "youtu.be" in source.lower()
+        )
+        has_captions = (
+            False
+            if is_youtube
+            else bool(_mapping_value(inspection, "caption_tracks", ()))
+        )
         format_id = _format_choice(
             inspection.formats,
             max_bytes,
