@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -40,9 +41,36 @@ class TranscriptArtifact:
         return {"segments": self.segments, "metadata": self.metadata}
 
 
+def _preload_cuda_libraries() -> None:
+    """Preload installed nvidia wheel libraries for ctranslate2 / CUDA support."""
+    import ctypes
+    import sys
+
+    for p in sys.path:
+        nv_dir = Path(p) / "nvidia"
+        if nv_dir.is_dir():
+            for sub in ("cublas", "cudnn", "cuda_nvrtc"):
+                lib_dir = nv_dir / sub / "lib"
+                if lib_dir.is_dir():
+                    cur = os.environ.get("LD_LIBRARY_PATH", "")
+                    if str(lib_dir) not in cur:
+                        os.environ["LD_LIBRARY_PATH"] = (
+                            f"{lib_dir}:{cur}" if cur else str(lib_dir)
+                        )
+                    # cublasLt must be loaded before cublas
+                    cublas_lt = lib_dir / "libcublasLt.so.12"
+                    if cublas_lt.is_file():
+                        with contextlib.suppress(Exception):
+                            ctypes.CDLL(str(cublas_lt), mode=ctypes.RTLD_GLOBAL)
+                    for so in sorted(lib_dir.glob("*.so*")):
+                        with contextlib.suppress(Exception):
+                            ctypes.CDLL(str(so), mode=ctypes.RTLD_GLOBAL)
+
+
 def _detect_device(configured: str | None) -> str:
     if configured and configured.lower() not in ("auto", ""):
         return configured.lower()
+    _preload_cuda_libraries()
     try:
         import ctranslate2  # type: ignore[import-untyped]
 
@@ -69,7 +97,20 @@ def _resolve_compute_type(configured: str | None, device: str) -> str:
     if configured and configured.strip():
         return configured.strip()
     if device == "cuda":
-        return "float16"
+        _preload_cuda_libraries()
+        try:
+            import ctranslate2  # type: ignore[import-untyped]
+
+            supported = ctranslate2.get_supported_compute_types("cuda")
+            if "float16" in supported:
+                return "float16"
+            if "int8_float32" in supported:
+                return "int8_float32"
+            if "int8" in supported:
+                return "int8"
+            return "float32"
+        except Exception:
+            return "default"
     return "int8"
 
 
@@ -85,6 +126,7 @@ class FasterWhisperBackend:
     def _factory(self) -> Callable[..., Any]:
         if self.model_factory is not None:
             return self.model_factory
+        _preload_cuda_libraries()
         try:
             from faster_whisper import WhisperModel
         except (ImportError, ModuleNotFoundError) as exc:
