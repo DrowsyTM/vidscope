@@ -128,6 +128,99 @@ def mcp_command() -> None:
     main()
 
 
+@app.command("doctor")
+def doctor_command(
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit diagnostic report as JSON.")
+    ] = False,
+) -> None:
+    """Check system requirements, media binaries, and YouTube token configuration."""
+    from .doctor import run_doctor
+
+    report = run_doctor()
+    if as_json:
+        _emit(report)
+    else:
+        typer.echo("Vidscope System Diagnostics")
+        typer.echo("===========================")
+        for check in report.checks:
+            if check.status == "ok":
+                symbol = typer.style("[✓]", fg=typer.colors.GREEN, bold=True)
+            elif check.status == "warning":
+                symbol = typer.style("[!]", fg=typer.colors.YELLOW, bold=True)
+            elif check.status == "missing":
+                symbol = typer.style("[✗]", fg=typer.colors.RED, bold=True)
+            else:  # optional_missing
+                symbol = typer.style("[-]", fg=typer.colors.BLUE)
+
+            typer.echo(f"{symbol} {check.name}: {check.message}")
+            if check.recommendation:
+                hint = (
+                    typer.style("    Tip: ", fg=typer.colors.CYAN)
+                    + check.recommendation
+                )
+                typer.echo(hint)
+
+        typer.echo("")
+        if report.ok:
+            status_text = typer.style(report.summary, fg=typer.colors.GREEN, bold=True)
+        else:
+            status_text = typer.style(report.summary, fg=typer.colors.RED, bold=True)
+        typer.echo(status_text)
+
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("setup-pot")
+def setup_pot_command(
+    path: Annotated[
+        Path | None,
+        typer.Option(
+            "--path",
+            help="Target directory for bgutil provider (defaults to ~/bgutil-ytdlp-pot-provider).",
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Force rebuild even if already present."),
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit setup result as JSON.")
+    ] = False,
+) -> None:
+    """Clone and compile the bgutil on-demand PO token generation script."""
+    from .doctor import setup_pot_provider
+
+    if not as_json:
+        typer.echo("Setting up Proof-of-Origin (PO) token provider...")
+
+    result = setup_pot_provider(target_dir=path, force=force)
+
+    if as_json:
+        _emit(result)
+    else:
+        if result.get("ok"):
+            typer.echo(
+                typer.style(
+                    f"[✓] {result.get('message')}", fg=typer.colors.GREEN, bold=True
+                )
+            )
+            typer.echo(f"    Script path: {result.get('path')}")
+            typer.echo("    yt-dlp will automatically invoke this script on-demand.")
+        else:
+            typer.echo(
+                typer.style(
+                    f"[✗] Setup failed: {result.get('error')}",
+                    fg=typer.colors.RED,
+                    bold=True,
+                )
+            )
+
+    if not result.get("ok"):
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
 

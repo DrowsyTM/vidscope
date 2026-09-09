@@ -113,6 +113,33 @@ pip install 'vidscope[vad]'
 pip install 'vidscope[all]'
 ```
 
+### System Diagnostics (`vidscope doctor`)
+Verify that your local system has required media binaries, speech models, and token providers:
+```bash
+vidscope doctor
+```
+Outputs an actionable diagnostic checklist:
+```text
+Vidscope System Diagnostics
+===========================
+[✓] FFmpeg: ffmpeg version 6.1.1
+[✓] FFprobe: ffprobe version 6.1.1
+[✓] Tesseract OCR: tesseract 5.3.4
+[✓] Speech-to-Text (ASR): faster-whisper + silero-vad ready [CPU (int8 quantized)]
+[✓] JavaScript Runtime: Node.js v22.22.2 (/usr/bin/node)
+[✓] PO Token Generator: Ready: v2.0.0 (~/bgutil-ytdlp-pot-provider/server/build/generate_once.js)
+[✓] Cookies File: Not configured (anonymous mode)
+
+System is fully configured and ready for video analysis.
+```
+
+### Optional: Proof-of-Origin (PO) Token Setup (`vidscope setup-pot`)
+If you run Vidscope on cloud or datacenter IPs (AWS, GCP, Hetzner) where YouTube blocks video stream formats, compile the on-demand PO token generation script with a single command:
+```bash
+vidscope setup-pot
+```
+This automatically clones and compiles the standalone script into `~/bgutil-ytdlp-pot-provider/server/build/generate_once.js`. `yt-dlp` will automatically invoke and cache tokens on demand without running any background Docker containers.
+
 ---
 
 ## FastMCP Configuration (Claude Desktop & Cursor)
