@@ -16,12 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `search_video`: Video grep engine supporting regex and case-sensitive matching across native captions (`source`) or analyzed speech transcripts (`job_id`).
 - Thread-safe in-memory `JobManager` with completion signaling (`completed_event`), incremental cursor pagination, transcript accumulation, and automatic 2-hour TTL cleanup.
 - Integrated `curl-cffi` and `bgutil-ytdlp-pot-provider` dependencies for browser TLS fingerprint impersonation and Proof-of-Origin (PO) token generation.
+- Replaced persistent Docker PO container with native on-demand script provider (`bgutil:script-node` via `generate_once.js`), eliminating persistent background containers.
 - Added `VIDSCOPE_COOKIES_FILE` environment configuration and `Settings.cookies_file` support for optional Netscape cookie-jar authentication across yt-dlp, curl-cffi, and youtube-transcript-api.
+- Added `VIDSCOPE_WHISPER_MODEL`, `VIDSCOPE_WHISPER_DEVICE`, and `VIDSCOPE_WHISPER_COMPUTE_TYPE` settings for flexible ASR configuration.
+- Added automatic device detection (`cuda` when CUDA GPU is available, fallback to `cpu` with `int8` quantization) and multilingual model fallback (`tiny` when `language != "en"`).
 - Added automatic Node.js JS runtime discovery for yt-dlp challenge execution.
 - Added ASR accuracy evaluation benchmark (`benchmarks/test_asr_accuracy.py`) calculating Word Error Rate (WER) and timestamp drift against reference transcripts.
 
 ### Changed
 - Enhanced `CaptionResolver` to utilize `curl_cffi` browser sessions with Chrome impersonation and cookie jar integration.
+- Upgraded `FasterWhisperBackend` with dynamic device, compute type, and language-aware model resolution.
 - Consolidated video analysis into a single entry point (`analyze_video`), removing duplicate paths (`get_video_timeline`, `get_video_transcript`, `start_video_analysis`).
 - Refactored FastMCP server to deliver direct multimodal data blocks instead of requiring local filesystem artifact traversal.
 

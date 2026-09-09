@@ -40,6 +40,39 @@ class TranscriptArtifact:
         return {"segments": self.segments, "metadata": self.metadata}
 
 
+def _detect_device(configured: str | None) -> str:
+    if configured and configured.lower() not in ("auto", ""):
+        return configured.lower()
+    try:
+        import ctranslate2  # type: ignore[import-untyped]
+
+        if (
+            hasattr(ctranslate2, "get_cuda_device_count")
+            and ctranslate2.get_cuda_device_count() > 0
+        ):
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def _resolve_model_name(configured: str | None, language: str) -> str:
+    if configured and configured.strip():
+        return configured.strip()
+    norm_lang = language.strip().lower()
+    if norm_lang in ("en", "english"):
+        return "tiny.en"
+    return "tiny"
+
+
+def _resolve_compute_type(configured: str | None, device: str) -> str:
+    if configured and configured.strip():
+        return configured.strip()
+    if device == "cuda":
+        return "float16"
+    return "int8"
+
+
 class FasterWhisperBackend:
     def __init__(
         self,
@@ -71,27 +104,38 @@ class FasterWhisperBackend:
             audio if isinstance(audio, (str, Path)) else _field(audio, "path", audio)
         )
         language_value = language or _field(request, "language", "en") or "en"
-        model_cache = _field(self.settings, "model_cache", None) or _field(
-            get_settings(), "model_cache", None
-        )
+        settings = self.settings or get_settings()
+        model_cache = _field(settings, "model_cache", None)
         if model_cache:
             cache = Path(model_cache).expanduser()
             cache.mkdir(parents=True, exist_ok=True)
             os.environ.setdefault("HF_HOME", str(cache))
             os.environ.setdefault("HF_HUB_CACHE", str(cache / "hub"))
+
+        configured_model = _field(settings, "whisper_model", None)
+        configured_device = _field(settings, "whisper_device", None)
+        configured_compute_type = _field(settings, "whisper_compute_type", None)
+
+        device = _detect_device(configured_device)
+        compute_type = _resolve_compute_type(configured_compute_type, device)
+        model_name = _resolve_model_name(configured_model, language_value)
+        cpu_threads = 4 if device == "cpu" else 0
+        num_workers = 1
+
         try:
             model = self._factory()(
-                "tiny.en",
-                device="cpu",
-                compute_type="int8",
-                cpu_threads=4,
-                num_workers=1,
+                model_name,
+                device=device,
+                compute_type=compute_type,
+                cpu_threads=cpu_threads,
+                num_workers=num_workers,
             )
         except AsrBackendFailure:
             raise
         except Exception as exc:
             raise AsrBackendFailure(
-                "ASR_MODEL_UNAVAILABLE", "faster-whisper model could not be loaded"
+                "ASR_MODEL_UNAVAILABLE",
+                f"faster-whisper model '{model_name}' could not be loaded: {exc}",
             ) from exc
         try:
             segments_iter, info = model.transcribe(
@@ -135,11 +179,11 @@ class FasterWhisperBackend:
             )
         metadata = {
             "provider": "faster-whisper",
-            "model": "tiny.en",
-            "device": "cpu",
-            "compute_type": "int8",
-            "cpu_threads": 4,
-            "num_workers": 1,
+            "model": model_name,
+            "device": device,
+            "compute_type": compute_type,
+            "cpu_threads": cpu_threads,
+            "num_workers": num_workers,
             "language": _field(info, "language", language_value),
             "language_probability": _field(info, "language_probability", None),
             "segment_count": len(rows),
