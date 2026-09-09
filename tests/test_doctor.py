@@ -127,20 +127,51 @@ def test_setup_pot_provider_success_flow(tmp_path: Path, monkeypatch: Any) -> No
     assert len(calls) >= 3
 
 
-def test_cli_doctor_command() -> None:
+def test_cli_doctor_command(monkeypatch: Any) -> None:
+    monkeypatch.setattr("shutil.which", lambda name: f"/mock/{name}")
+    monkeypatch.setattr(
+        "vidscope.doctor._run_cmd",
+        lambda cmd, **kw: (0, "mock version 1.0.0"),
+    )
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
     assert "Vidscope System Diagnostics" in result.stdout
     assert "FFmpeg" in result.stdout
 
 
-def test_cli_doctor_json_command() -> None:
+def test_cli_doctor_command_unhealthy(monkeypatch: Any) -> None:
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "Vidscope System Diagnostics" in result.stdout
+    assert "FFmpeg" in result.stdout
+
+
+def test_cli_doctor_json_command(monkeypatch: Any) -> None:
     import json
 
+    monkeypatch.setattr("shutil.which", lambda name: f"/mock/{name}")
+    monkeypatch.setattr(
+        "vidscope.doctor._run_cmd",
+        lambda cmd, **kw: (0, "mock version 1.0.0"),
+    )
     result = runner.invoke(app, ["doctor", "--json"])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert "ok" in payload
+    assert payload["ok"] is True
+    assert "checks" in payload
+
+
+def test_cli_doctor_json_command_unhealthy(monkeypatch: Any) -> None:
+    import json
+
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert "ok" in payload
+    assert payload["ok"] is False
     assert "checks" in payload
 
 
