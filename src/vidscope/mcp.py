@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -39,6 +40,40 @@ from .settings import get_settings
 logger = logging.getLogger("vidscope.mcp")
 
 mcp = FastMCP("vidscope")
+
+_COMMON_LANGUAGE_NAMES: dict[str, str] = {
+    "english": "en",
+    "spanish": "es",
+    "french": "fr",
+    "german": "de",
+    "italian": "it",
+    "portuguese": "pt",
+    "russian": "ru",
+    "chinese": "zh",
+    "mandarin": "zh",
+    "cantonese": "zh-yue",
+    "japanese": "ja",
+    "korean": "ko",
+    "arabic": "ar",
+    "hindi": "hi",
+    "bengali": "bn",
+    "dutch": "nl",
+    "polish": "pl",
+    "turkish": "tr",
+    "ukrainian": "uk",
+    "vietnamese": "vi",
+    "greek": "el",
+    "hebrew": "he",
+    "swedish": "sv",
+    "norwegian": "no",
+    "danish": "da",
+    "finnish": "fi",
+    "indonesian": "id",
+    "thai": "th",
+    "czech": "cs",
+    "romanian": "ro",
+    "hungarian": "hu",
+}
 
 
 def _error_payload(error: AnalysisError) -> dict[str, Any]:
@@ -262,22 +297,24 @@ def _process_job_chunks(
                     for i in range(1, n_frames + 1)
                 ]
 
+                has_tesseract = bool(shutil.which("tesseract"))
                 for f_idx, frame_path in enumerate(frame_files):
                     ts = timestamps[f_idx] if f_idx < len(timestamps) else start_sec
                     frame_id = f"frame_{uuid.uuid4().hex[:8]}_{int(ts)}"
 
                     ocr_text = None
-                    try:
-                        ocr_backend = TesseractBackend()
-                        ocr_res = ocr_backend.recognize(frame_path)
-                        words = [
-                            str(r.get("text") or "")
-                            for r in ocr_res.rows
-                            if r.get("text")
-                        ]
-                        ocr_text = " ".join(words).strip() or None
-                    except Exception:
-                        ocr_text = None
+                    if has_tesseract:
+                        try:
+                            ocr_backend = TesseractBackend()
+                            ocr_res = ocr_backend.recognize(frame_path)
+                            words = [
+                                str(r.get("text") or "")
+                                for r in ocr_res.rows
+                                if r.get("text")
+                            ]
+                            ocr_text = " ".join(words).strip() or None
+                        except Exception:
+                            ocr_text = None
 
                     cached_frame = cache_dir / f"{frame_id}.jpg"
                     shutil.copy2(frame_path, cached_frame)
@@ -303,6 +340,15 @@ def _process_job_chunks(
                             "timestamp_seconds": round(ts, 2),
                             "formatted_time": format_timestamp(ts),
                             "ocr_text": ocr_text,
+                            "ocr_status": (
+                                "detected"
+                                if ocr_text
+                                else (
+                                    "no_text_detected"
+                                    if has_tesseract
+                                    else "tesseract_unavailable"
+                                )
+                            ),
                             "surrounding_dialogue": (
                                 " ".join(dialogue) if dialogue else None
                             ),
@@ -312,11 +358,20 @@ def _process_job_chunks(
                 full_transcript = " ".join(
                     s["text"] for s in transcript_segments if s["text"]
                 )
-                summary_text = (
-                    full_transcript[:4_000]
-                    if full_transcript
-                    else "Visual keyframes available; speech transcript unavailable for this chunk."
-                )
+                if full_transcript:
+                    summary_text = full_transcript[:4_000]
+                else:
+                    ocr_note = (
+                        "OCR analyzed (no on-screen text detected)"
+                        if has_tesseract
+                        else "OCR unavailable (tesseract binary not installed on host)"
+                    )
+                    summary_text = (
+                        f"Visual keyframes extracted ({len(keyframes)} frames between "
+                        f"{format_timestamp(start_sec)} and {format_timestamp(end_sec)}). "
+                        f"Speech transcript unavailable for this chunk. {ocr_note}. "
+                        "Call view_frame(frame_id) to inspect frames."
+                    )
 
                 section = {
                     "chunk_index": index,
@@ -829,6 +884,33 @@ def search_video(
         payload = _error_payload(error)
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
+    if language is not None:
+        raw_lang = language.strip()
+        cleaned_lang = raw_lang.lower()
+        if not cleaned_lang:
+            target_lang = "en"
+        elif cleaned_lang in _COMMON_LANGUAGE_NAMES:
+            target_lang = _COMMON_LANGUAGE_NAMES[cleaned_lang]
+        elif re.match(r"^[a-zA-Z]{2,3}(-[a-zA-Z0-9]+)?$", cleaned_lang):
+            target_lang = cleaned_lang
+        else:
+            error = AnalysisError(
+                code=ErrorCode.INVALID_REQUEST,
+                stage="search_video",
+                message=(
+                    f"Unsupported or invalid language code '{language}'. "
+                    "Provide a valid ISO language code (e.g. 'en', 'es', 'fr') "
+                    "or standard language name ('english', 'spanish')."
+                ),
+                retryable=False,
+            )
+            payload = _error_payload(error)
+            return ToolResult(
+                content=payload, structured_content=payload, is_error=True
+            )
+    else:
+        target_lang = "en"
+
     cleaned_query = query.strip()
     if not cleaned_query:
         error = AnalysisError(
@@ -890,28 +972,56 @@ def search_video(
         try:
             inspector = SourceInspector()
             inspection = inspector.inspect({"source": source})
-            target_lang = language or "en"
             resolver = CaptionResolver()
             track = resolver.resolve(inspection, {"language": target_lang})
 
             if track is None or not track.segments:
-                avail = [t.language for t in inspection.caption_tracks if t.language]
-                avail_summary = (
-                    f" (available languages reported: {sorted(set(avail))[:8]})"
-                    if avail
-                    else ""
-                )
+                available_tracks = [t for t in inspection.caption_tracks if t.language]
                 matching_track = _choose_track(inspection.caption_tracks, target_lang)
                 if matching_track is not None:
                     msg = (
-                        f"Native caption track for '{target_lang}' is listed in video metadata, "
-                        "but could not be downloaded from the remote provider (remote provider may be rate-limiting or timed out). "
-                        "Call analyze_video(source) to perform visual and speech analysis, "
-                        "then search with job_id."
+                        f"Native caption track for '{target_lang}' ({matching_track.language}, {matching_track.kind}) "
+                        "is listed in video metadata, but could not be downloaded from the remote provider "
+                        "(remote provider rate-limiting or blocking IP requests, e.g. HTTP 429). "
+                        "Call analyze_video(source) to perform visual and audio analysis, "
+                        "then search with job_id once analyzed."
                     )
                 else:
+                    manual_langs = sorted(
+                        set(t.language for t in available_tracks if t.kind == "manual")
+                    )
+                    auto_langs = sorted(
+                        set(t.language for t in available_tracks if t.kind != "manual")
+                    )
+                    if manual_langs:
+                        summary_langs = f"available manual tracks: {manual_langs[:10]}"
+                    elif auto_langs:
+                        priority = [
+                            "en",
+                            "es",
+                            "fr",
+                            "de",
+                            "zh",
+                            "ja",
+                            "ru",
+                            "pt",
+                            "it",
+                            "ar",
+                            "hi",
+                        ]
+                        sampled = [
+                            lang_code
+                            for lang_code in priority
+                            if any(a.lower().startswith(lang_code) for a in auto_langs)
+                        ]
+                        if not sampled:
+                            sampled = auto_langs[:8]
+                        summary_langs = f"available tracks: {sampled}"
+                    else:
+                        summary_langs = "no caption tracks found on video"
+
                     msg = (
-                        f"No native captions available for source in language '{target_lang}'{avail_summary}. "
+                        f"No native captions available for source in language '{target_lang}' ({summary_langs}). "
                         "Call analyze_video(source) to transcribe or visually analyze the video, "
                         "then search with job_id."
                     )
@@ -962,7 +1072,7 @@ def search_video(
             if len(matches) >= max(1, max_matches):
                 break
 
-    return {
+    res = {
         "query": query,
         "is_regex": is_regex,
         "case_sensitive": case_sensitive,
@@ -971,6 +1081,9 @@ def search_video(
         "matches_count": len(matches),
         "matches": matches,
     }
+    if source is not None:
+        res["language"] = target_lang
+    return res
 
 
 @mcp.resource(
@@ -1020,6 +1133,29 @@ def _read_plan_resource(run_id: str) -> str:
         return json.dumps({"error": str(exc)})
 
 
+@mcp.prompt(name="analyze_video_workflow")
+def analyze_video_workflow(source: str) -> str:
+    """Step-by-step guidance for analyzing a video with Vidscope."""
+    return f"""To analyze and understand the video at '{source}':
+1. Start with get_video_info(source='{source}') to inspect duration, chapters, and caption availability.
+2. If chapter titles answer the question, refer to chapter timestamps directly.
+3. Call analyze_video(source='{source}') to begin streaming timeline analysis.
+4. If it transitions to background processing, poll get_job_status(job_id='...', since_chunk=...) using next_since_chunk.
+5. Use view_frame(frame_id='...') to inspect high-resolution visual evidence for key timestamps.
+"""
+
+
+@mcp.prompt(name="search_video_workflow")
+def search_video_workflow(source: str, query: str) -> str:
+    """Step-by-step guidance for locating spoken keywords or topics in a video."""
+    return f"""To search for '{query}' in '{source}':
+1. Run search_video(source='{source}', query='{query}') to check for native subtitle matches.
+2. If remote captions are rate-limited or unavailable, start analyze_video(source='{source}').
+3. Once chunks complete, search the analyzed transcript using search_video(job_id='...', query='{query}').
+4. Inspect matching frames using view_frame(source='{source}', timestamp_seconds=match['start_seconds']).
+"""
+
+
 @mcp.resource("vidscope://info", name="server_info")
 def _server_info_resource() -> str:
     """Server capabilities, active version, and available resource URI templates."""
@@ -1035,6 +1171,10 @@ def _server_info_resource() -> str:
                 "view_frame",
                 "search_video",
             ],
+            "prompts": [
+                "analyze_video_workflow",
+                "search_video_workflow",
+            ],
             "resource_templates": [
                 "vidscope://runs/{run_id}/artifacts/{artifact_id}{?page,offset,limit}",
                 "vidscope://runs/{run_id}/manifest",
@@ -1045,6 +1185,42 @@ def _server_info_resource() -> str:
     )
 
 
+def _configure_tool_schemas() -> None:
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        async def _apply() -> None:
+            vf = await mcp.get_tool("view_frame")
+            if vf and hasattr(vf, "parameters") and isinstance(vf.parameters, dict):
+                vf.parameters["oneOf"] = [
+                    {"required": ["frame_id"]},
+                    {"required": ["source", "timestamp_seconds"]},
+                ]
+            sv = await mcp.get_tool("search_video")
+            if sv and hasattr(sv, "parameters") and isinstance(sv.parameters, dict):
+                sv.parameters["oneOf"] = [
+                    {"required": ["query", "source"]},
+                    {"required": ["query", "job_id"]},
+                ]
+
+        if loop and loop.is_running():
+            loop.create_task(_apply())
+        else:
+            new_loop = asyncio.new_event_loop()
+            try:
+                new_loop.run_until_complete(_apply())
+            finally:
+                new_loop.close()
+    except Exception:
+        pass
+
+
+_configure_tool_schemas()
+
+
 def main() -> None:
     configure_logging()
     mcp.run(show_banner=False)
@@ -1052,11 +1228,13 @@ def main() -> None:
 
 __all__ = [
     "analyze_video",
+    "analyze_video_workflow",
     "get_job_status",
     "get_video_info",
     "main",
     "mcp",
     "read_artifact_resource",
     "search_video",
+    "search_video_workflow",
     "view_frame",
 ]

@@ -741,3 +741,197 @@ def test_analyze_video_schema_constraints() -> None:
         chunk_prop = props.get("chunk_duration_seconds", {})
         assert chunk_prop.get("maximum") == 180.0
         assert chunk_prop.get("exclusiveMinimum") == 0.0
+
+
+def test_search_video_language_normalization_and_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.backends.source import CaptionTrack, SourceInspection
+    from vidscope.contracts import ErrorCode
+    from vidscope.mcp import search_video
+
+    mock_track = CaptionTrack(
+        kind="manual",
+        language="en",
+        provider="test",
+        source_url="http://test",
+        segments=[{"text": "learning deep learning", "start": 1.0, "end": 2.0}],
+    )
+    mock_inspection = SourceInspection(
+        source="https://example.com/video.mp4",
+        is_url=True,
+        duration_seconds=60.0,
+        caption_tracks=[mock_track],
+        streams=[],
+        metadata={},
+    )
+
+    monkeypatch.setattr(
+        "vidscope.mcp.SourceInspector.inspect",
+        lambda self, req: mock_inspection,
+    )
+    monkeypatch.setattr(
+        "vidscope.mcp.CaptionResolver.resolve",
+        lambda self, insp, req: mock_track if req.get("language") == "en" else None,
+    )
+
+    # 1. Full language name "english" normalizes to "en" and matches
+    res1 = search_video(
+        query="learning",
+        source="https://example.com/video.mp4",
+        language="english",
+    )
+    assert not isinstance(res1, ToolResult)
+    assert res1["language"] == "en"
+    assert res1["matches_count"] == 1
+
+    # 2. Invalid language string rejected as INVALID_REQUEST
+    res2 = search_video(
+        query="learning",
+        source="https://example.com/video.mp4",
+        language="invalid language with $$$",
+    )
+    assert isinstance(res2, ToolResult)
+    assert res2.is_error is True
+    assert res2.structured_content["code"] == ErrorCode.INVALID_REQUEST
+    assert "Unsupported or invalid language" in res2.structured_content["message"]
+
+
+def test_search_video_remote_caption_failure_informative_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.backends.source import CaptionTrack, SourceInspection
+    from vidscope.mcp import search_video
+
+    mock_meta_track = CaptionTrack(
+        kind="manual",
+        language="en",
+        provider="yt-dlp",
+        source_url="https://youtube.com/timedtext?v=123",
+        segments=[],
+    )
+    mock_inspection = SourceInspection(
+        source="https://www.youtube.com/watch?v=123",
+        is_url=True,
+        duration_seconds=60.0,
+        caption_tracks=[mock_meta_track],
+        streams=[],
+        metadata={},
+    )
+
+    monkeypatch.setattr(
+        "vidscope.mcp.SourceInspector.inspect",
+        lambda self, req: mock_inspection,
+    )
+    monkeypatch.setattr(
+        "vidscope.mcp.CaptionResolver.resolve",
+        lambda self, insp, req: None,
+    )
+
+    res = search_video(
+        query="test",
+        source="https://www.youtube.com/watch?v=123",
+        language="en",
+    )
+    assert not isinstance(res, ToolResult)
+    assert res["matches_count"] == 0
+    # Must explain that the track exists in metadata but could not be downloaded
+    assert "is listed in video metadata" in res["message"]
+    assert "remote provider" in res["message"]
+    assert "analyze_video" in res["message"]
+
+
+def test_job_status_continuation_contract_and_cursor() -> None:
+    from vidscope.jobs import JobState
+
+    job = JobState(
+        job_id="job_test_cursor",
+        source="video.mp4",
+        status="processing",
+        created_at=100.0,
+        updated_at=105.0,
+        progress_percentage=50.0,
+        completed_chunks=1,
+        total_chunks=2,
+        chunks=[
+            {"start_seconds": 0.0, "end_seconds": 30.0},
+            {"start_seconds": 30.0, "end_seconds": 60.0},
+        ],
+        available_sections=[{"chunk_index": 1, "summary": "part 1"}],
+    )
+
+    # Initial poll at chunk 0
+    poll0 = job.to_dict(since_chunk=0)
+    assert poll0["next_since_chunk"] == 1
+    assert poll0["has_more"] is True
+    assert poll0["timeline_chunks_returned"] == 1
+    assert "Job is processing" in poll0["message"]
+
+    # Poll with since_chunk=1 (empty incremental response)
+    poll1 = job.to_dict(since_chunk=1)
+    assert poll1["next_since_chunk"] == 1
+    assert poll1["has_more"] is True
+    assert poll1["timeline_chunks_returned"] == 0
+    assert "No new timeline sections since chunk 1" in poll1["message"]
+
+    # When completed
+    job.status = "completed"
+    job.completed_chunks = 2
+    job.available_sections.append({"chunk_index": 2, "summary": "part 2"})
+    poll2 = job.to_dict(since_chunk=1)
+    assert poll2["next_since_chunk"] == 2
+    assert poll2["has_more"] is False
+    assert poll2["timeline_chunks_returned"] == 1
+    assert "Analysis completed successfully" in poll2["message"]
+
+
+def test_tool_schema_oneof_exclusivity() -> None:
+    from vidscope.mcp import mcp
+
+    list_tools = getattr(mcp, "list_tools", None)
+    if callable(list_tools):
+        tools = _await(list_tools())
+        if isinstance(tools, Mapping):
+            tools = list(tools.values())
+        tool_map = {_field(t, "name"): t for t in tools}
+
+        vf = tool_map["view_frame"]
+        params_vf = getattr(vf, "parameters", {})
+        assert "oneOf" in params_vf
+        vf_reqs = [set(o.get("required", [])) for o in params_vf["oneOf"]]
+        assert {"frame_id"} in vf_reqs
+        assert {"source", "timestamp_seconds"} in vf_reqs
+
+        sv = tool_map["search_video"]
+        params_sv = getattr(sv, "parameters", {})
+        assert "oneOf" in params_sv
+        sv_reqs = [set(o.get("required", [])) for o in params_sv["oneOf"]]
+        assert {"query", "source"} in sv_reqs
+        assert {"query", "job_id"} in sv_reqs
+
+
+def test_mcp_prompt_registration_and_discovery() -> None:
+    from vidscope.mcp import analyze_video_workflow, mcp, search_video_workflow
+
+    # Direct invocations
+    text_av = analyze_video_workflow("test.mp4")
+    assert "get_video_info" in text_av
+    assert "analyze_video" in text_av
+
+    text_sv = search_video_workflow("test.mp4", "hello")
+    assert "search_video" in text_sv
+    assert "hello" in text_sv
+
+    # FastMCP list_prompts discovery
+    list_prompts = getattr(mcp, "list_prompts", None)
+    if callable(list_prompts):
+        prompts = _await(list_prompts())
+        if isinstance(prompts, Mapping):
+            prompts = list(prompts.values())
+        names = [_field(p, "name") for p in prompts]
+        assert "analyze_video_workflow" in names
+        assert "search_video_workflow" in names

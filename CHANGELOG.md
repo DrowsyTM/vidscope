@@ -26,9 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added graceful degradation to visual-only keyframe analysis in `analyze_video` when remote caption fetching fails or is rate-limited and local ASR is unavailable.
 - Ensured terminal job failures in `get_job_status` and `analyze_video` emit standard `is_error=True` ToolResult envelopes.
 - Added explicit mutual exclusivity validation and schema constraints (`Field`) in `view_frame` and `search_video`.
+- Enforced schema-level `oneOf` mutual exclusivity on `view_frame` and `search_video` tool parameters.
+- Added explicit cursor pagination (`next_since_chunk`), continuation flag (`has_more`), and actionable polling progress messages to `get_job_status`.
+- Replaced static job completion estimates with dynamic remaining time estimation based on rolling chunk execution latency.
+- Added natural language normalization (`english` -> `en`) and ISO format validation in `search_video`.
+- Added `ocr_status` tracking on keyframes and informative chunk summaries detailing when OCR is disabled due to missing host binary.
+- Registered standard MCP workflow prompts (`analyze_video_workflow`, `search_video_workflow`) for agent prompt discovery.
 - Registered static `vidscope://info` resource for discovery via standard `resources/list` protocol calls.
 - Suppressed verbose FastMCP stderr startup banner on server launch.
-- Added `language` parameter and available language hints to `search_video`, distinguishing between unlisted tracks and remote provider retrieval failures.
+- Added `language` parameter and available language hints to `search_video`, distinguishing between unlisted tracks and remote provider retrieval failures (e.g. HTTP 429).
 - Fixed `ffprobe` execution failures by removing the unsupported `-nostdin` argument in `backends/media.py` and `backends/source.py`.
 - Corrected frame extraction seek offset math for nonzero start offsets in `backends/media.py`.
 - Fixed WebVTT timestamp decimal format to use standard `.` instead of `,`.

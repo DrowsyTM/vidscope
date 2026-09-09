@@ -60,12 +60,45 @@ class JobState:
     def to_dict(self, since_chunk: int = 0) -> dict[str, Any]:
         now = time.time()
         elapsed = now - self.created_at
-        remaining = (
-            max(0.0, self.estimated_total_seconds - elapsed)
-            if self.status == "processing"
-            else 0.0
-        )
+        if self.status == "processing":
+            if self.completed_chunks > 0 and self.total_chunks > self.completed_chunks:
+                avg_chunk_duration = elapsed / self.completed_chunks
+                remaining_chunks = self.total_chunks - self.completed_chunks
+                remaining = max(1.0, remaining_chunks * avg_chunk_duration)
+            else:
+                remaining = max(0.0, self.estimated_total_seconds - elapsed)
+        else:
+            remaining = 0.0
+
         returned_sections = self.available_sections[since_chunk:]
+        total_available = len(self.available_sections)
+        has_more = (self.status == "processing") or (
+            since_chunk + len(returned_sections) < self.total_chunks
+        )
+
+        if self.status == "processing":
+            if len(returned_sections) == 0:
+                message = (
+                    f"Job is still processing ({round(self.progress_percentage)}% complete, "
+                    f"{self.completed_chunks}/{self.total_chunks} chunks). "
+                    f"No new timeline sections since chunk {since_chunk}. "
+                    f"Continue polling with since_chunk={total_available}."
+                )
+            else:
+                message = (
+                    f"Job is processing ({round(self.progress_percentage)}% complete, "
+                    f"{self.completed_chunks}/{self.total_chunks} chunks). "
+                    f"Returned {len(returned_sections)} new timeline section(s). "
+                    f"Next poll should use since_chunk={total_available}."
+                )
+        elif self.status == "completed":
+            message = (
+                f"Analysis completed successfully ({self.completed_chunks}/{self.total_chunks} chunks). "
+                f"Returned {len(returned_sections)} timeline section(s)."
+            )
+        else:
+            message = f"Job status: '{self.status}'."
+
         return {
             "job_id": self.job_id,
             "source": self.source,
@@ -76,7 +109,10 @@ class JobState:
             "estimated_remaining_seconds": round(remaining, 1),
             "timeline": list(returned_sections),
             "timeline_chunks_returned": len(returned_sections),
-            "total_timeline_chunks": len(self.available_sections),
+            "total_timeline_chunks": total_available,
+            "next_since_chunk": total_available,
+            "has_more": has_more,
+            "message": message,
             "error": self.error,
         }
 
@@ -95,7 +131,7 @@ class JobManager:
         self,
         source: str,
         chunk_ranges: list[tuple[float, float]],
-        estimated_seconds_per_chunk: float = 6.0,
+        estimated_seconds_per_chunk: float = 12.0,
         job_key: str | None = None,
     ) -> JobState:
         with self._lock:
@@ -143,7 +179,7 @@ class JobManager:
         self,
         job_id: str,
         chunk_ranges: list[tuple[float, float]],
-        estimated_seconds_per_chunk: float = 6.0,
+        estimated_seconds_per_chunk: float = 12.0,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
