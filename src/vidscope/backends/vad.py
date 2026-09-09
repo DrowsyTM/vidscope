@@ -82,7 +82,7 @@ class SileroVadBackend:
             get_timestamps = module.get_speech_timestamps
             waveform: Any = None
             try:
-                import soundfile as sf  # type: ignore[import-untyped]
+                import soundfile as sf
                 import torch
 
                 data, _sr = sf.read(str(audio_path), dtype="float32")

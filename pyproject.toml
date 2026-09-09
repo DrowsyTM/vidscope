@@ -40,13 +40,16 @@ dependencies = [
 asr = [
   "faster-whisper>=1.2.0",
   "silero-vad>=6.2.0",
+  "soundfile>=0.12.0",
 ]
 vad = [
   "silero-vad>=6.2.0",
+  "soundfile>=0.12.0",
 ]
 all = [
   "faster-whisper>=1.2.0",
   "silero-vad>=6.2.0",
+  "soundfile>=0.12.0",
 ]
 dev = [
   "pytest>=8.0",
@@ -121,6 +124,7 @@ module = [
   "yt_dlp.*",
   "youtube_transcript_api.*",
   "curl_cffi.*",
+  "soundfile.*",
 ]
 ignore_missing_imports = true
 
