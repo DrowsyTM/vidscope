@@ -315,3 +315,55 @@ def test_format_choice_pairs_separate_video_and_audio_dash_streams() -> None:
         formats, max_bytes=380, need_video=True, need_audio=True
     )
     assert chosen_constrained == "v-720+a-64"
+
+
+def test_format_choice_prefers_requested_language_and_original_audio() -> None:
+    from vidscope.backends.source import _format_choice
+
+    formats = [
+        {
+            "format_id": "v-1080",
+            "vcodec": "h264",
+            "acodec": "none",
+            "height": 1080,
+            "filesize": 500,
+        },
+        {
+            "format_id": "251-es-dub",
+            "vcodec": "none",
+            "acodec": "opus",
+            "language": "es",
+            "format_note": "Spanish, medium",
+            "language_preference": -1,
+            "abr": 155,
+            "filesize": 150,
+        },
+        {
+            "format_id": "251-en-orig",
+            "vcodec": "none",
+            "acodec": "opus",
+            "language": "en-US",
+            "format_note": "English (US) original (default), medium",
+            "language_preference": 10,
+            "abr": 136,
+            "filesize": 130,
+        },
+    ]
+
+    # Default/English request prefers original English audio even if Spanish dub has higher bitrate
+    chosen = _format_choice(
+        formats, max_bytes=1000, need_video=True, need_audio=True, language="en"
+    )
+    assert chosen == "v-1080+251-en-orig"
+
+    # Audio only also selects English original
+    chosen_audio = _format_choice(
+        formats, max_bytes=1000, need_video=False, need_audio=True, language="en"
+    )
+    assert chosen_audio == "251-en-orig"
+
+    # Explicit Spanish request prefers Spanish audio
+    chosen_es = _format_choice(
+        formats, max_bytes=1000, need_video=True, need_audio=True, language="es"
+    )
+    assert chosen_es == "v-1080+251-es-dub"

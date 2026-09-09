@@ -657,10 +657,17 @@ def get_job_status(job_id: str, since_chunk: int = 0) -> dict[str, Any] | ToolRe
         error = AnalysisError(
             code=ErrorCode.ARTIFACT_NOT_FOUND,
             stage="get_job_status",
-            message=f"Job '{job_id}' was not found or has expired.",
+            message=f"Job '{job_id}' was not found or has expired. Call analyze_video to start a new analysis.",
             retryable=False,
+            diagnostics={
+                "job_id": job_id,
+                "next_action": "analyze_video",
+                "retry_after_seconds": 0,
+            },
         )
         payload = _error_payload(error)
+        payload["next_action"] = "analyze_video"
+        payload["retry_after_seconds"] = 0
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     if job.status == "failed":
@@ -752,10 +759,17 @@ def view_frame(
             error = AnalysisError(
                 code=ErrorCode.ARTIFACT_NOT_FOUND,
                 stage="view_frame",
-                message=f"Frame '{frame_id}' not found or expired.",
+                message=f"Frame '{frame_id}' not found or expired. Call analyze_video to start a new analysis.",
                 retryable=False,
+                diagnostics={
+                    "frame_id": frame_id,
+                    "next_action": "analyze_video",
+                    "retry_after_seconds": 0,
+                },
             )
             payload = _error_payload(error)
+            payload["next_action"] = "analyze_video"
+            payload["retry_after_seconds"] = 0
             return ToolResult(
                 content=payload, structured_content=payload, is_error=True
             )
@@ -972,10 +986,17 @@ def search_video(
         error = AnalysisError(
             code=ErrorCode.ARTIFACT_NOT_FOUND,
             stage="search_video",
-            message=f"Job '{job_id}' was not found or has expired.",
+            message=f"Job '{job_id}' was not found or has expired. Call analyze_video to start a new analysis.",
             retryable=False,
+            diagnostics={
+                "job_id": job_id,
+                "next_action": "analyze_video",
+                "retry_after_seconds": 0,
+            },
         )
         payload = _error_payload(error)
+        payload["next_action"] = "analyze_video"
+        payload["retry_after_seconds"] = 0
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     if job.status == "failed":
@@ -1039,6 +1060,7 @@ def search_video(
             if len(matches) >= max(1, max_matches):
                 break
 
+    matches.sort(key=lambda m: (m["start_seconds"], m["end_seconds"]))
     coverage_meta = job.coverage()
     res: dict[str, Any] = {
         "job_id": job_id,
@@ -1056,10 +1078,17 @@ def search_video(
                 "Call view_frame(frame_id=...) to inspect frames."
             )
         else:
-            res["hint"] = (
-                f"No transcript matches found for '{query}' in analyzed range "
-                f"({coverage_meta['analyzed_start_seconds']}s - {coverage_meta['analyzed_end_seconds']}s)."
-            )
+            if coverage_meta.get("transcript_end_seconds") is not None:
+                res["hint"] = (
+                    f"No transcript matches found for '{query}' in transcript range "
+                    f"({coverage_meta['transcript_start_seconds']}s - {coverage_meta['transcript_end_seconds']}s, "
+                    f"analyzed: {coverage_meta['analyzed_start_seconds']}s - {coverage_meta['analyzed_end_seconds']}s)."
+                )
+            else:
+                res["hint"] = (
+                    f"No transcript matches found for '{query}' in analyzed range "
+                    f"({coverage_meta['analyzed_start_seconds']}s - {coverage_meta['analyzed_end_seconds']}s)."
+                )
     return res
 
 
@@ -1096,6 +1125,10 @@ def get_transcript(
 
     Requires a completed analysis job. Bounded to max_duration_seconds (up to 600s/10min)
     to protect agent context windows.
+
+    Filtering is overlap-based: segments that overlap [start_seconds, end_seconds] are
+    returned (a segment may start slightly before start_seconds if it ends after start_seconds).
+    Returned segments are guaranteed to be sorted monotonically by (start_seconds, end_seconds).
     """
     if start_seconds < 0.0:
         error = AnalysisError(
@@ -1122,10 +1155,17 @@ def get_transcript(
         error = AnalysisError(
             code=ErrorCode.ARTIFACT_NOT_FOUND,
             stage="get_transcript",
-            message=f"Job '{job_id}' was not found or has expired.",
+            message=f"Job '{job_id}' was not found or has expired. Call analyze_video to start a new analysis.",
             retryable=False,
+            diagnostics={
+                "job_id": job_id,
+                "next_action": "analyze_video",
+                "retry_after_seconds": 0,
+            },
         )
         payload = _error_payload(error)
+        payload["next_action"] = "analyze_video"
+        payload["retry_after_seconds"] = 0
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     if job.status == "failed":
@@ -1229,6 +1269,7 @@ def get_transcript(
                 }
             )
 
+    matching_segments.sort(key=lambda s: (s["start_seconds"], s["end_seconds"]))
     full_text = " ".join(s["text"] for s in matching_segments if s["text"]).strip()
 
     res: dict[str, Any] = {
@@ -1321,7 +1362,7 @@ def search_video_workflow(source: str, query: str) -> str:
     """Step-by-step guidance for locating spoken keywords or topics in a video."""
     return f"""To search for '{query}' in '{source}':
 1. Start analysis with analyze_video(source='{source}').
-2. If background processing, poll get_job_status(job_id=...) until completed.
+2. If background processing, poll get_job_status(job_id=..., since_chunk=next_since_chunk) incrementally until completed.
 3. Once completed, search the transcript with search_video(job_id='...', query='{query}').
 4. Read surrounding dialogue context using get_transcript(job_id='...', start_seconds=match['start_seconds'] - 15, end_seconds=match['end_seconds'] + 15).
 5. Inspect matching frames using view_frame(source='{source}', timestamp_seconds=match['start_seconds']).

@@ -108,13 +108,12 @@ class SileroVadBackend:
         intervals: list[dict[str, float]] = []
         for item in raw or ():
             try:
-                item_start = max(
-                    start,
-                    float(_field(item, "start", _field(item, "start_seconds", 0.0))),
+                rel_start = float(
+                    _field(item, "start", _field(item, "start_seconds", 0.0))
                 )
-                item_end = min(
-                    end, float(_field(item, "end", _field(item, "end_seconds", 0.0)))
-                )
+                rel_end = float(_field(item, "end", _field(item, "end_seconds", 0.0)))
+                item_start = max(start, round(start + rel_start, 3))
+                item_end = min(end, round(start + rel_end, 3))
             except (TypeError, ValueError):
                 continue
             if item_end > item_start:

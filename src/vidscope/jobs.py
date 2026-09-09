@@ -69,6 +69,46 @@ class JobState:
         is_full = False
         if duration is not None and duration > 0:
             is_full = (start_sec <= 0.5) and (end_sec >= duration - 1.0)
+
+        t_start: float | None = None
+        t_end: float | None = None
+        t_count = len(self.full_transcript)
+        if self.full_transcript:
+            t_start = round(
+                float(
+                    self.full_transcript[0].get(
+                        "start_seconds", self.full_transcript[0].get("start", 0.0)
+                    )
+                ),
+                2,
+            )
+            t_end = round(
+                float(
+                    self.full_transcript[-1].get(
+                        "end_seconds", self.full_transcript[-1].get("end", 0.0)
+                    )
+                ),
+                2,
+            )
+
+        if self.status == "failed":
+            transcript_status = "failed"
+        elif self.status == "completed":
+            if t_count > 0:
+                transcript_status = "completed"
+            else:
+                section_statuses = [
+                    sec.get("transcript_status")
+                    for sec in self.available_sections
+                    if "transcript_status" in sec
+                ]
+                if any(s == "failed" for s in section_statuses):
+                    transcript_status = "failed"
+                else:
+                    transcript_status = "no_speech_detected"
+        else:
+            transcript_status = "pending"
+
         return {
             "is_full_video": is_full,
             "analyzed_start_seconds": round(start_sec, 2),
@@ -77,6 +117,10 @@ class JobState:
             "video_duration_seconds": round(duration, 2)
             if duration is not None
             else None,
+            "transcript_start_seconds": t_start,
+            "transcript_end_seconds": t_end,
+            "transcript_segments_count": t_count,
+            "transcript_status": transcript_status,
         }
 
     def to_dict(self, since_chunk: int = 0) -> dict[str, Any]:
@@ -272,6 +316,12 @@ class JobManager:
             job.available_sections.append(section)
             if transcript_segments:
                 job.full_transcript.extend(transcript_segments)
+                job.full_transcript.sort(
+                    key=lambda s: (
+                        float(s.get("start_seconds", s.get("start", 0.0))),
+                        float(s.get("end_seconds", s.get("end", 0.0))),
+                    )
+                )
             job.completed_chunks = completed_chunks
             job.progress_percentage = (
                 (completed_chunks / job.total_chunks) * 100.0

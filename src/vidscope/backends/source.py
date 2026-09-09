@@ -1521,6 +1521,7 @@ def _format_choice(
     need_video: bool = False,
     need_audio: bool = False,
     window_seconds: float | None = None,
+    language: str | None = None,
 ) -> str:
     def _est_size(item: Mapping[str, Any]) -> float | None:
         size = _finite_float(item.get("filesize")) or _finite_float(
@@ -1538,10 +1539,41 @@ def _format_choice(
     def _is_a(item: Mapping[str, Any]) -> bool:
         return str(item.get("acodec", "")).lower() not in {"", "none"}
 
+    def _audio_rank(item: Mapping[str, Any]) -> tuple[int, int, int]:
+        target = (language or "en").lower().strip()
+        target_base = target.split("-")[0].split("_")[0]
+        track_lang = str(item.get("language") or "").lower().strip()
+        track_base = track_lang.split("-")[0].split("_")[0] if track_lang else ""
+        note = str(item.get("format_note") or "").lower()
+        is_orig = bool(
+            item.get("is_original")
+            or "original" in note
+            or "(original)" in note
+            or track_lang == "original"
+        )
+        is_def = bool(
+            item.get("is_default") or "default" in note or "(default)" in note
+        )
+        lang_pref = int(_finite_float(item.get("language_preference")) or 0)
+        quality = int(
+            _finite_float(item.get("abr")) or _finite_float(item.get("tbr")) or 0
+        )
+
+        if track_lang == target or (track_base and track_base == target_base):
+            tier = 0 if (is_orig or is_def) else 1
+        elif is_orig or is_def:
+            tier = 2
+        elif not track_lang or track_lang in {"und", "none", "zxx"}:
+            tier = 3
+        else:
+            tier = 4
+
+        return (tier, -lang_pref, -quality)
+
     if need_video and need_audio:
-        combined_candidates: list[tuple[int, str]] = []
+        combined_candidates: list[tuple[int, int, int, int, str]] = []
         video_candidates: list[tuple[int, str, float]] = []
-        audio_candidates: list[tuple[int, str, float]] = []
+        audio_candidates: list[tuple[int, int, int, str, float]] = []
 
         for item in formats:
             format_id = item.get("format_id")
@@ -1557,32 +1589,27 @@ def _format_choice(
                     quality = int(
                         _finite_float(item.get("height")) or 0
                     ) * 1_000_000 + int(_finite_float(item.get("tbr")) or 0)
-                    combined_candidates.append((-quality, fid_str))
+                    combined_candidates.append((*_audio_rank(item), -quality, fid_str))
             elif has_v:
                 quality = int(_finite_float(item.get("height")) or 0) * 1_000_000 + int(
                     _finite_float(item.get("tbr")) or 0
                 )
                 video_candidates.append((-quality, fid_str, size or 0.0))
             elif has_a:
-                quality = int(
-                    _finite_float(item.get("abr"))
-                    or _finite_float(item.get("tbr"))
-                    or 0
-                )
-                audio_candidates.append((-quality, fid_str, size or 0.0))
+                audio_candidates.append((*_audio_rank(item), fid_str, size or 0.0))
 
         if combined_candidates:
             combined_candidates.sort()
-            return combined_candidates[0][1]
+            return combined_candidates[0][-1]
 
         if video_candidates and audio_candidates:
             video_candidates.sort()
             audio_candidates.sort()
             for _vq, v_id, v_sz in video_candidates:
-                for _aq, a_id, a_sz in audio_candidates:
+                for *_, a_id, a_sz in audio_candidates:
                     if (v_sz + a_sz) <= max_bytes or max_bytes <= 0:
                         return f"{v_id}+{a_id}"
-            return f"{video_candidates[0][1]}+{audio_candidates[0][1]}"
+            return f"{video_candidates[0][1]}+{audio_candidates[0][-2]}"
 
         raise _failure(
             "MEDIA_DECODE_FAILED",
@@ -1590,7 +1617,7 @@ def _format_choice(
             stage="acquire_media",
         )
 
-    candidates: list[tuple[int, int, str]] = []
+    candidates: list[tuple[Any, ...]] = []
     for item in formats:
         format_id = item.get("format_id")
         if not format_id:
@@ -1608,7 +1635,12 @@ def _format_choice(
             _finite_float(item.get("tbr")) or 0
         )
         stream_rank = 0 if (has_v and has_a) else 1
-        candidates.append((stream_rank, -quality, _text(format_id, limit=128)))
+        if need_audio:
+            candidates.append(
+                (*_audio_rank(item), stream_rank, -quality, _text(format_id, limit=128))
+            )
+        else:
+            candidates.append((stream_rank, -quality, _text(format_id, limit=128)))
 
     if not candidates:
         raise _failure(
@@ -1617,7 +1649,7 @@ def _format_choice(
             stage="acquire_media",
         )
     candidates.sort()
-    return str(candidates[0][2])
+    return str(candidates[0][-1])
 
 
 def _artifact_from_store(store: Any, path: Path, *, metadata: Mapping[str, Any]) -> Any:
@@ -1816,6 +1848,7 @@ class MediaAcquirer:
             need_audio=bool({"vad"} & task_names)
             or ("transcript" in task_names and not has_captions),
             window_seconds=end - start,
+            language=_mapping_value(request, "language", "en"),
         )
         output_template = str(staging / "media.%(ext)s")
         downloaded: list[Path] = []

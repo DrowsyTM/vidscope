@@ -684,6 +684,8 @@ def test_search_video_job_validation_and_not_found() -> None:
     assert isinstance(res1, ToolResult)
     assert res1.is_error is True
     assert res1.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
+    assert res1.structured_content["next_action"] == "analyze_video"
+    assert res1.structured_content["retry_after_seconds"] == 0
 
     # Failed job
     failed_job = global_job_manager.create_job("failed_src", [(0.0, 10.0)])
@@ -1059,6 +1061,8 @@ def test_get_transcript_job_not_found_and_failed() -> None:
     assert isinstance(res1, ToolResult)
     assert res1.is_error is True
     assert res1.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
+    assert res1.structured_content["next_action"] == "analyze_video"
+    assert res1.structured_content["retry_after_seconds"] == 0
 
     # Failed
     job_failed = global_job_manager.create_job("fail.mp4", [(0.0, 30.0)])
@@ -1233,3 +1237,112 @@ def test_stdio_validation_error_stderr_suppression() -> None:
     assert stderr.strip() == ""
     parsed = json.loads(line2)
     assert parsed["result"]["isError"] is True
+
+
+def test_get_transcript_sorts_segments_monotonically() -> None:
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import get_transcript
+
+    job = global_job_manager.create_job("sort_test.mp4", [(0.0, 100.0)])
+    # Add segments out of order
+    out_of_order_segs = [
+        {"start_seconds": 50.0, "end_seconds": 60.0, "text": "later dialogue"},
+        {"start_seconds": 10.0, "end_seconds": 20.0, "text": "earlier dialogue"},
+        {"start_seconds": 25.0, "end_seconds": 35.0, "text": "middle dialogue"},
+    ]
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "transcript_status": "completed"},
+        completed_chunks=1,
+        transcript_segments=out_of_order_segs,
+    )
+    global_job_manager.complete_job(job.job_id)
+
+    res = get_transcript(job_id=job.job_id, start_seconds=0.0, end_seconds=100.0)
+    assert isinstance(res, dict)
+    assert res["segments_count"] == 3
+    starts = [s["start_seconds"] for s in res["segments"]]
+    assert starts == [10.0, 25.0, 50.0]
+    assert res["text"] == "earlier dialogue middle dialogue later dialogue"
+
+
+def test_job_state_coverage_independent_transcript_metrics() -> None:
+    from vidscope.jobs import global_job_manager
+
+    job = global_job_manager.create_job("cov_test.mp4", [(0.0, 180.0), (180.0, 360.0)])
+    # Initially pending with no transcript
+    cov0 = job.coverage()
+    assert cov0["transcript_start_seconds"] is None
+    assert cov0["transcript_end_seconds"] is None
+    assert cov0["transcript_segments_count"] == 0
+    assert cov0["transcript_status"] == "pending"
+
+    # Add chunk with speech
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "transcript_status": "completed"},
+        completed_chunks=1,
+        transcript_segments=[
+            {"start_seconds": 5.0, "end_seconds": 25.0, "text": "speech here"}
+        ],
+    )
+    global_job_manager.complete_job(job.job_id)
+    cov1 = job.coverage()
+    assert cov1["transcript_start_seconds"] == 5.0
+    assert cov1["transcript_end_seconds"] == 25.0
+    assert cov1["transcript_segments_count"] == 1
+    assert cov1["transcript_status"] == "completed"
+
+
+def test_search_video_zero_matches_hint_includes_transcript_range() -> None:
+    from vidscope.jobs import global_job_manager
+    from vidscope.mcp import search_video
+
+    job = global_job_manager.create_job("search_test.mp4", [(0.0, 180.0)])
+    global_job_manager.update_job_progress(
+        job.job_id,
+        section={"chunk_index": 1, "transcript_status": "completed"},
+        completed_chunks=1,
+        transcript_segments=[
+            {
+                "start_seconds": 10.0,
+                "end_seconds": 30.0,
+                "text": "we discuss machine learning",
+            }
+        ],
+    )
+    global_job_manager.complete_job(job.job_id)
+
+    res = search_video(job_id=job.job_id, query="quantum")
+    assert isinstance(res, dict)
+    assert res["matches_count"] == 0
+    assert "transcript range (10.0s - 30.0s" in res["hint"]
+    assert "analyzed: 0.0s - 180.0s" in res["hint"]
+
+
+def test_get_job_status_missing_job_returns_actionable_next_action() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.mcp import get_job_status
+
+    res = get_job_status(job_id="nonexistent_job_12345")
+    assert isinstance(res, ToolResult)
+    assert res.is_error is True
+    assert res.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
+    assert res.structured_content["next_action"] == "analyze_video"
+    assert res.structured_content["retry_after_seconds"] == 0
+
+
+def test_view_frame_missing_frame_returns_actionable_next_action() -> None:
+    from fastmcp.tools.base import ToolResult
+
+    from vidscope.contracts import ErrorCode
+    from vidscope.mcp import view_frame
+
+    res = view_frame(frame_id="frame_missing_12345")
+    assert isinstance(res, ToolResult)
+    assert res.is_error is True
+    assert res.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
+    assert res.structured_content["next_action"] == "analyze_video"
+    assert res.structured_content["retry_after_seconds"] == 0

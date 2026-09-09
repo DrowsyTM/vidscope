@@ -173,6 +173,29 @@ def test_silero_vad_backend_clamps_and_sorts_intervals(tmp_path: Path) -> None:
     ]
 
 
+def test_silero_vad_backend_handles_non_zero_chunk_offset(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"riff")
+    module = SimpleNamespace(
+        load_silero_vad=lambda onnx=False: "model",
+        read_audio=lambda path, sampling_rate=16000: (path, sampling_rate),
+        get_speech_timestamps=lambda audio_value, model, sampling_rate=16000, return_seconds=True: [
+            {"start": 5.0, "end": 15.0},
+            {"start": 170.0, "end": 190.0},
+        ],
+    )
+    result = SileroVadBackend(module=module).detect(
+        audio, start_seconds=180.0, end_seconds=360.0
+    )
+
+    assert result.intervals == [
+        {"start_seconds": 185.0, "end_seconds": 195.0},
+        {"start_seconds": 350.0, "end_seconds": 360.0},
+    ]
+
+
 def test_tesseract_backend_parses_tsv_and_retains_low_confidence(
     tmp_path: Path,
 ) -> None:

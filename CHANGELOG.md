@@ -68,6 +68,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added missing FastMCP resource endpoints for `/manifest` and `/plan` URIs.
 - Fixed Dockerfile installation by removing `--no-index` from local package install, enabling PEP 517 build backend resolution.
 - Enforced `AnalysisTask` enum type safety and `TextContent` union narrowing for mypy compliance.
+- Fixed audio track selection in `_format_choice` with multi-tier language-aware ranking, prioritizing requested language tracks, `original`, and `default` audio over foreign language dubs with slightly higher bitrates.
+- Fixed chunk timestamp offset in `core.py` transcribe stage so transcribed segments and word timestamps are absolute (`offset = float(request.time_range.start_seconds)`), resolving overlapping duplicate segments and enabling full multi-chunk transcript aggregation.
+- Fixed Silero VAD timestamp calculation in `SileroVadBackend.detect` for chunk offsets (`start_seconds > 0`).
+- Added independent transcript coverage metrics to `JobState.coverage()`: `transcript_start_seconds`, `transcript_end_seconds`, `transcript_segments_count`, and `transcript_status`.
+- Ensured strictly monotonic segment ordering by `(start_seconds, end_seconds)` in `JobState.full_transcript` and `get_transcript`.
+- Added machine-readable recovery actions (`next_action: "analyze_video"`, `retry_after_seconds: 0`) to static missing/expired job errors across `get_job_status`, `search_video`, `get_transcript`, and `view_frame`.
+- Enhanced `search_video` zero-match hint to expose actual transcript coverage range when searching completed jobs.
 
 ### Removed
 - Removed legacy file-dumping `analyze_video` tool and redundant intermediate MCP tools (`get_video_timeline`, `get_video_transcript`, `start_video_analysis`).
