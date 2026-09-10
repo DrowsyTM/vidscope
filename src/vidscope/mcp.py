@@ -128,7 +128,12 @@ def _error_payload(error: AnalysisError) -> dict[str, Any]:
     name="get_video_info",
     annotations={"readOnlyHint": True, "idempotentHint": True},
 )
-def get_video_info(source: str) -> dict[str, Any] | ToolResult:
+def get_video_info(
+    source: Annotated[
+        str,
+        Field(description="URL or local path of the video to inspect"),
+    ],
+) -> dict[str, Any] | ToolResult:
     """Fast preflight metadata discovery without downloading media.
 
     Returns video title, duration, available subtitle/caption languages,
@@ -666,7 +671,19 @@ def analyze_video(
     name="get_job_status",
     annotations={"readOnlyHint": True, "idempotentHint": True},
 )
-def get_job_status(job_id: str, since_chunk: int = 0) -> dict[str, Any] | ToolResult:
+def get_job_status(
+    job_id: Annotated[
+        str,
+        Field(description="Unique analysis job ID returned by analyze_video"),
+    ],
+    since_chunk: Annotated[
+        int,
+        Field(
+            ge=0,
+            description="Retrieve only timeline chunks starting from this index",
+        ),
+    ] = 0,
+) -> dict[str, Any] | ToolResult:
     """Check the status of a background video analysis job and retrieve streaming timeline chunks.
 
     Supports incremental polling: pass since_chunk (e.g. 1) to retrieve only newly completed

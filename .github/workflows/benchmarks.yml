@@ -46,8 +46,17 @@ jobs:
       - name: Run benchmarks
         run: uv run pytest benchmarks/ --benchmark-only --benchmark-json=benchmark-results.json
 
+      - name: Generate benchmark summary report
+        run: |
+          uv run python scripts/generate_benchmark_report.py \
+            --input benchmark-results.json \
+            --output BENCHMARKS.md \
+            --step-summary
+
       - name: Upload benchmark results
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: benchmark-results
-          path: benchmark-results.json
+          path: |
+            benchmark-results.json
+            BENCHMARKS.md

@@ -221,6 +221,25 @@ def setup_pot_command(
         raise typer.Exit(code=1)
 
 
+@app.command("docs")
+def docs_command(
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Target markdown file path."),
+    ] = Path("docs/MCP_REFERENCE.md"),
+    check: Annotated[
+        bool,
+        typer.Option("--check", help="Check if existing documentation is up to date."),
+    ] = False,
+) -> None:
+    """Generate or verify MCP tool documentation."""
+    from .docs import run_docs_generation
+
+    code = run_docs_generation(output=output, check=check)
+    if code != 0:
+        raise typer.Exit(code=code)
+
+
 if __name__ == "__main__":
     app()
 
