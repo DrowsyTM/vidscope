@@ -350,10 +350,20 @@ YOUTUBE_DOMAINS: Final[frozenset[str]] = frozenset(
 def is_youtube_source(source: str) -> bool:
     """Determine whether source is a YouTube URL by validating its parsed hostname."""
     try:
-        url = source if ("://" in source or not source.startswith(("/", "."))) else ""
-        if url and "://" not in url:
+        url = (
+            source
+            if (
+                "://" in source
+                or source.startswith("//")
+                or not source.startswith(("/", "."))
+            )
+            else ""
+        )
+        if url and "://" not in url and not url.startswith("//"):
             url = "//" + url
         parsed = urlsplit(url)
+        if parsed.scheme.lower() not in {"", "https"}:
+            return False
         host = (parsed.hostname or "").lower().rstrip(".")
         return any(
             host == domain or host.endswith(f".{domain}") for domain in YOUTUBE_DOMAINS

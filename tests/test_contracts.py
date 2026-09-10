@@ -220,6 +220,12 @@ def test_is_youtube_source() -> None:
         is_youtube_source("https://www.youtube-nocookie.com/embed/aircAruvnKk") is True
     )
     assert is_youtube_source("youtube.com/watch?v=aircAruvnKk") is True
+    assert is_youtube_source("//youtube.com/watch?v=aircAruvnKk") is True
+
+    # Non-HTTPS schemes
+    assert is_youtube_source("file://youtube.com/clip") is False
+    assert is_youtube_source("ftp://youtube.com/clip") is False
+    assert is_youtube_source("http://youtube.com/watch?v=aircAruvnKk") is False
 
     # Attack/false positive URLs containing youtube substrings
     assert is_youtube_source("https://attacker.com/youtube.com") is False
