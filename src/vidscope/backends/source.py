@@ -33,6 +33,7 @@ from ..contracts import (
     ErrorCode,
     _is_windows_drive_authority,
     _is_windows_drive_path,
+    is_youtube_source,
 )
 
 
@@ -1112,44 +1113,7 @@ def _parse_caption_payload(
     return result[:MAX_CAPTION_SEGMENTS]
 
 
-def _is_youtube_source(source: str) -> bool:
-    """Determine whether source is a YouTube URL by validating its parsed hostname."""
-    try:
-        url = source if ("://" in source or not source.startswith(("/", "."))) else ""
-        if url and "://" not in url:
-            url = "//" + url
-        parsed = urllib.parse.urlparse(url)
-        host = (parsed.hostname or "").lower().rstrip(".")
-        return (
-            host == "youtube.com"
-            or host.endswith(".youtube.com")
-            or host == "youtu.be"
-            or host.endswith(".youtu.be")
-            or host == "youtube-nocookie.com"
-            or host.endswith(".youtube-nocookie.com")
-        )
-    except Exception:
-        return False
-
-
-def _transcript_video_id(source: str) -> str | None:
-    parsed = urllib.parse.urlparse(source)
-    host = parsed.netloc.lower().split(":", 1)[0].rstrip(".")
-    is_youtube_host = host == "youtube.com" or host.endswith(".youtube.com")
-    if host in {"youtu.be", "www.youtu.be"}:
-        return parsed.path.strip("/").split("/", 1)[0] or None
-    if (
-        is_youtube_host
-        or host == "youtube-nocookie.com"
-        or host.endswith(".youtube-nocookie.com")
-    ):
-        query_id = urllib.parse.parse_qs(parsed.query).get("v")
-        if query_id:
-            return query_id[0]
-        parts = [part for part in parsed.path.split("/") if part]
-        if len(parts) >= 2 and parts[0] in {"embed", "shorts", "live"}:
-            return parts[1]
-    return None
+_is_youtube_source = is_youtube_source
 
 
 def _segments_from_transcript(value: Any) -> list[dict[str, Any]]:

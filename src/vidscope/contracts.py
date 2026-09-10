@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
@@ -340,6 +340,29 @@ def _validate_existing_local_source(path: Path) -> Path:
     if allowed_root is not None:
         _require_within(resolved, allowed_root, label="source")
     return resolved
+
+
+YOUTUBE_DOMAINS: Final[frozenset[str]] = frozenset(
+    {"youtube.com", "youtu.be", "youtube-nocookie.com"}
+)
+
+
+def is_youtube_source(source: str) -> bool:
+    """Determine whether source is a YouTube URL by validating its parsed hostname."""
+    try:
+        url = source if ("://" in source or not source.startswith(("/", "."))) else ""
+        if url and "://" not in url:
+            url = "//" + url
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        return any(
+            host == domain or host.endswith(f".{domain}") for domain in YOUTUBE_DOMAINS
+        )
+    except Exception:
+        return False
+
+
+_is_youtube_source = is_youtube_source
 
 
 class TimeRange(_ContractModel):
@@ -879,4 +902,6 @@ __all__ = [
     "StageRecord",
     "StageStatus",
     "TimeRange",
+    "YOUTUBE_DOMAINS",
+    "is_youtube_source",
 ]
