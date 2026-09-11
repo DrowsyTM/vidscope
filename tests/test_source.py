@@ -379,6 +379,12 @@ def test_source_is_youtube_hostname_validation() -> None:
     assert _is_youtube_source("https://youtu.be/123") is True
     assert _is_youtube_source("https://www.youtube-nocookie.com/embed/123") is True
     assert _is_youtube_source("youtube.com/watch?v=123") is True
+    assert _is_youtube_source("//youtube.com/watch?v=123") is True
+
+    # Non-HTTPS schemes
+    assert _is_youtube_source("file://youtube.com/clip") is False
+    assert _is_youtube_source("ftp://youtube.com/clip") is False
+    assert _is_youtube_source("http://youtube.com/watch?v=123") is False
 
     # Non-YouTube URLs or files containing substrings
     assert _is_youtube_source("https://evil.com/youtube.com") is False

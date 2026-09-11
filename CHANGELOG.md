@@ -76,10 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added machine-readable recovery actions (`next_action: "analyze_video"`, `retry_after_seconds: 0`) to static missing/expired job errors across `get_job_status`, `search_video`, `get_transcript`, and `view_frame`.
 - Enhanced `search_video` zero-match hint to expose actual transcript coverage range when searching completed jobs.
 - Added audio overlap buffer (2.0s) and conservative exact-token boundary deduplication (`reconcile_transcript_segments`) across adjacent analysis chunks, eliminating boundary phrase truncation and duplicate transcript segments across seams with zero information loss.
-- Replaced loose URL substring matching for YouTube detection with strict hostname parsing and domain suffix validation (`_is_youtube_source`), resolving CodeQL `py/incomplete-url-substring-sanitization` alerts and preventing false-positive routing on non-YouTube sources.
+- Replaced loose URL substring matching for YouTube detection with centralized strict hostname parsing, domain suffix validation, and scheme restriction to HTTPS/schemeless (`is_youtube_source` in `vidscope.contracts`), resolving CodeQL `py/incomplete-url-substring-sanitization` alerts, rejecting non-HTTPS schemes (e.g. `file://`, `ftp://`), and preventing false-positive routing on non-YouTube sources.
 
 ### Removed
 - Removed legacy file-dumping `analyze_video` tool and redundant intermediate MCP tools (`get_video_timeline`, `get_video_transcript`, `start_video_analysis`).
+- Removed obsolete private URL parser `_transcript_video_id` in `backends/source.py`.
 
 ## [0.1.0] - 2026-09-07
 
