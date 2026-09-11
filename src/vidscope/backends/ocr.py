@@ -85,10 +85,10 @@ class TesseractBackend:
         )
         if not frame_path.is_file() or frame_path.stat().st_size <= 0:
             raise OcrBackendFailure("OCR_UNAVAILABLE", "frame is unavailable")
+        frame_resolved = frame_path.resolve()
         command = [
             self._binary(),
-            "--",
-            str(frame_path),
+            str(frame_resolved),
             "stdout",
             "--psm",
             "6",

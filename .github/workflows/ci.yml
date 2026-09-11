@@ -44,6 +44,9 @@ jobs:
       - name: Run Ruff format check
         run: uv run ruff format --check .
 
+      - name: Verify MCP documentation up to date
+        run: uv run vidscope docs --check
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest

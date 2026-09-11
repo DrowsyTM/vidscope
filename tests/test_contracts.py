@@ -206,3 +206,34 @@ def test_default_tasks_are_metadata_and_transcript(tmp_path: Path) -> None:
     request = make_request(tmp_path)
 
     assert task_names(request.tasks) == {"metadata", "transcript"}
+
+
+def test_is_youtube_source() -> None:
+    from vidscope.contracts import is_youtube_source
+
+    # Valid YouTube hosts
+    assert is_youtube_source("https://www.youtube.com/watch?v=aircAruvnKk") is True
+    assert is_youtube_source("https://youtube.com/watch?v=aircAruvnKk") is True
+    assert is_youtube_source("https://m.youtube.com/watch?v=aircAruvnKk") is True
+    assert is_youtube_source("https://youtu.be/aircAruvnKk") is True
+    assert (
+        is_youtube_source("https://www.youtube-nocookie.com/embed/aircAruvnKk") is True
+    )
+    assert is_youtube_source("youtube.com/watch?v=aircAruvnKk") is True
+    assert is_youtube_source("//youtube.com/watch?v=aircAruvnKk") is True
+
+    # Non-HTTPS schemes
+    assert is_youtube_source("file://youtube.com/clip") is False
+    assert is_youtube_source("ftp://youtube.com/clip") is False
+    assert is_youtube_source("http://youtube.com/watch?v=aircAruvnKk") is False
+
+    # Attack/false positive URLs containing youtube substrings
+    assert is_youtube_source("https://attacker.com/youtube.com") is False
+    assert is_youtube_source("https://attacker.com?v=youtube.com") is False
+    assert is_youtube_source("https://youtube.com.attacker.com") is False
+    assert is_youtube_source("https://notyoutube.com") is False
+    assert is_youtube_source("https://attacker.com/youtu.be") is False
+    assert is_youtube_source("https://attacker.com/youtube-nocookie.com") is False
+    assert is_youtube_source("/tmp/videos/youtube.com.mp4") is False
+    assert is_youtube_source("relative/youtube.com.mp4") is False
+    assert is_youtube_source("file:///videos/youtube.com.mp4") is False

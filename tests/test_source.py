@@ -367,3 +367,29 @@ def test_format_choice_prefers_requested_language_and_original_audio() -> None:
         formats, max_bytes=1000, need_video=True, need_audio=True, language="es"
     )
     assert chosen_es == "v-1080+251-es-dub"
+
+
+def test_source_is_youtube_hostname_validation() -> None:
+    from vidscope.backends.source import _is_youtube_source
+
+    # Valid YouTube URLs
+    assert _is_youtube_source("https://www.youtube.com/watch?v=123") is True
+    assert _is_youtube_source("https://youtube.com/watch?v=123") is True
+    assert _is_youtube_source("https://m.youtube.com/watch?v=123") is True
+    assert _is_youtube_source("https://youtu.be/123") is True
+    assert _is_youtube_source("https://www.youtube-nocookie.com/embed/123") is True
+    assert _is_youtube_source("youtube.com/watch?v=123") is True
+    assert _is_youtube_source("//youtube.com/watch?v=123") is True
+
+    # Non-HTTPS schemes
+    assert _is_youtube_source("file://youtube.com/clip") is False
+    assert _is_youtube_source("ftp://youtube.com/clip") is False
+    assert _is_youtube_source("http://youtube.com/watch?v=123") is False
+
+    # Non-YouTube URLs or files containing substrings
+    assert _is_youtube_source("https://evil.com/youtube.com") is False
+    assert _is_youtube_source("https://evil.com?v=youtube.com") is False
+    assert _is_youtube_source("https://youtube.com.evil.com") is False
+    assert _is_youtube_source("https://fakeyoutube.com") is False
+    assert _is_youtube_source("file:///videos/youtube.com.mp4") is False
+    assert _is_youtube_source("/tmp/youtube.com.mp4") is False

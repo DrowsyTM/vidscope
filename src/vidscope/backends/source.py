@@ -33,6 +33,7 @@ from ..contracts import (
     ErrorCode,
     _is_windows_drive_authority,
     _is_windows_drive_path,
+    is_youtube_source,
 )
 
 
@@ -1112,24 +1113,7 @@ def _parse_caption_payload(
     return result[:MAX_CAPTION_SEGMENTS]
 
 
-def _transcript_video_id(source: str) -> str | None:
-    parsed = urllib.parse.urlparse(source)
-    host = parsed.netloc.lower().split(":", 1)[0].rstrip(".")
-    is_youtube_host = host == "youtube.com" or host.endswith(".youtube.com")
-    if host in {"youtu.be", "www.youtu.be"}:
-        return parsed.path.strip("/").split("/", 1)[0] or None
-    if (
-        is_youtube_host
-        or host == "youtube-nocookie.com"
-        or host.endswith(".youtube-nocookie.com")
-    ):
-        query_id = urllib.parse.parse_qs(parsed.query).get("v")
-        if query_id:
-            return query_id[0]
-        parts = [part for part in parsed.path.split("/") if part]
-        if len(parts) >= 2 and parts[0] in {"embed", "shorts", "live"}:
-            return parts[1]
-    return None
+_is_youtube_source = is_youtube_source
 
 
 def _segments_from_transcript(value: Any) -> list[dict[str, Any]]:
@@ -1173,11 +1157,7 @@ class CaptionResolver:
     ) -> CaptionTrack | None:
         source = str(getattr(inspection, "source", "") or "")
         is_url = bool(getattr(inspection, "is_url", False))
-        is_youtube = is_url and bool(
-            _transcript_video_id(source)
-            or "youtube.com" in source.lower()
-            or "youtu.be" in source.lower()
-        )
+        is_youtube = is_url and _is_youtube_source(source)
         # Remote YouTube caption pulling is disabled; rely on local ASR
         if is_youtube:
             return None
@@ -1831,11 +1811,7 @@ class MediaAcquirer:
             for task in (raw_tasks if isinstance(raw_tasks, Iterable) else (raw_tasks,))
         }
         source = str(getattr(inspection, "source", "") or "")
-        is_youtube = bool(
-            _transcript_video_id(source)
-            or "youtube.com" in source.lower()
-            or "youtu.be" in source.lower()
-        )
+        is_youtube = _is_youtube_source(source)
         has_captions = (
             False
             if is_youtube
