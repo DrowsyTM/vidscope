@@ -531,7 +531,7 @@ def test_analyze_video_async_fallback_and_get_job_status_streaming(
     assert res["total_chunks"] == 2
     assert res["next_since_chunk"] == 0
     assert res["has_more"] is True
-    assert "estimated_completion_seconds" in res
+    assert "estimated_remaining_seconds" in res
 
     # Wait for completion
     job = global_job_manager.get_job(job_id)
@@ -598,7 +598,7 @@ def test_search_video_rejects_inflight_processing_job() -> None:
     assert res.structured_content["code"] == ErrorCode.INVALID_REQUEST
     assert res.structured_content["retryable"] is True
     assert res.structured_content["next_action"] == "get_job_status"
-    assert res.structured_content["retry_after_seconds"] > 0
+    assert res.structured_content["estimated_remaining_seconds"] > 0
 
 
 def test_analyze_video_idempotency_returns_existing_job(
@@ -685,7 +685,7 @@ def test_search_video_job_validation_and_not_found() -> None:
     assert res1.is_error is True
     assert res1.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
     assert res1.structured_content["next_action"] == "analyze_video"
-    assert res1.structured_content["retry_after_seconds"] == 0
+    assert res1.structured_content["retryable"] is False
 
     # Failed job
     failed_job = global_job_manager.create_job("failed_src", [(0.0, 10.0)])
@@ -834,7 +834,7 @@ def test_job_status_continuation_contract_and_cursor() -> None:
     assert poll0["timeline_chunks_returned"] == 1
     assert "Job is processing" in poll0["message"]
     assert poll0["next_action"] == "get_job_status"
-    assert poll0["retry_after_seconds"] > 0
+    assert poll0["estimated_remaining_seconds"] > 0
     assert "coverage" in poll0
 
     # Poll with since_chunk=1 (empty incremental response)
@@ -1046,7 +1046,7 @@ def test_get_transcript_rejects_inflight_processing_job() -> None:
     assert res.structured_content["code"] == ErrorCode.INVALID_REQUEST
     assert res.structured_content["retryable"] is True
     assert res.structured_content["next_action"] == "get_job_status"
-    assert res.structured_content["retry_after_seconds"] > 0
+    assert res.structured_content["estimated_remaining_seconds"] > 0
 
 
 def test_get_transcript_job_not_found_and_failed() -> None:
@@ -1062,7 +1062,7 @@ def test_get_transcript_job_not_found_and_failed() -> None:
     assert res1.is_error is True
     assert res1.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
     assert res1.structured_content["next_action"] == "analyze_video"
-    assert res1.structured_content["retry_after_seconds"] == 0
+    assert res1.structured_content["retryable"] is False
 
     # Failed
     job_failed = global_job_manager.create_job("fail.mp4", [(0.0, 30.0)])
@@ -1331,7 +1331,7 @@ def test_get_job_status_missing_job_returns_actionable_next_action() -> None:
     assert res.is_error is True
     assert res.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
     assert res.structured_content["next_action"] == "analyze_video"
-    assert res.structured_content["retry_after_seconds"] == 0
+    assert res.structured_content["retryable"] is False
 
 
 def test_view_frame_missing_frame_returns_actionable_next_action() -> None:
@@ -1345,7 +1345,7 @@ def test_view_frame_missing_frame_returns_actionable_next_action() -> None:
     assert res.is_error is True
     assert res.structured_content["code"] == ErrorCode.ARTIFACT_NOT_FOUND
     assert res.structured_content["next_action"] == "analyze_video"
-    assert res.structured_content["retry_after_seconds"] == 0
+    assert res.structured_content["retryable"] is False
 
 
 def test_reconcile_transcript_segments_word_level_timestamps() -> None:

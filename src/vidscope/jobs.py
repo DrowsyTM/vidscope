@@ -344,6 +344,7 @@ class JobState:
             "progress_percentage": round(self.progress_percentage, 1),
             "completed_chunks": self.completed_chunks,
             "total_chunks": self.total_chunks,
+            "retry_after_seconds": max(1.0, round(remaining, 1)) if has_more else 0.0,
             "estimated_remaining_seconds": round(remaining, 1),
             "coverage": self.coverage(),
             "timeline": list(returned_sections),
@@ -352,7 +353,6 @@ class JobState:
             "next_since_chunk": total_available,
             "has_more": has_more,
             "next_action": "get_job_status" if has_more else None,
-            "retry_after_seconds": max(1.0, round(remaining, 1)) if has_more else 0.0,
             "message": message,
             "error": self.error,
         }

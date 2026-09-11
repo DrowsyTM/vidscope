@@ -30,8 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added DASH video and audio stream pairing in `_format_choice` to download and mux separate video-only and audio-only tracks within size constraints, enabling local ASR transcription for modern YouTube sources.
 - Added `soundfile` waveform loading in `SileroVadBackend` with channel-averaging and resampling fallback, removing runtime dependency on `torchcodec` under torchaudio >= 2.6.
 - Added explicit `transcript_status` (`"completed"`, `"no_speech_detected"`, `"failed"`) and `transcript_error` tracking on timeline chunk sections.
+- Added `vidscope eval` CLI command and headless OMP evaluation runner (`vidscope.eval_runner`) supporting Phase 1 Protocol Hygiene scorecards (TCER, TSER, Polling Cadence Violations) and Phase 2 Timeline Semantic Comprehension (tIoU, boundary MAE, Kendall's tau, absent-event hallucination rejection).
+- Added Mock FastMCP mode (`--mock` / `--mock-async` / `VIDSCOPE_MOCK_MCP=1`) simulating zero-cost, deterministic and stochastic sync/async video analysis for rapid testing and headless agent benchmarking.
+- Added PyYAML dependency for parsing benchmark evaluation datasets (`vidscope.eval_harness.load_benchmark_dataset`).
 
 ### Changed
+- Maintained backward-compatible `retry_after_seconds` alias alongside `estimated_remaining_seconds` across `analyze_video`, `get_job_status`, `search_video`, and `get_transcript` response payloads.
 - Refactored `search_video` to be strictly post-analysis (`job_id` required; removed `source` and `language`), eliminating upfront agent bypass antipatterns and token-wasting caption fetch attempts.
 - Enforced strict completion gating on `search_video`, rejecting in-flight jobs (`status != "completed"`) with typed `retryable=True` errors, `retry_after_seconds`, and `next_action="get_job_status"` to eliminate false negatives and agent hallucinations.
 - Added structured timeline coverage metadata (`coverage`: `is_full_video`, `analyzed_start_seconds`, `analyzed_end_seconds`, `analyzed_duration_seconds`, `video_duration_seconds`) across `analyze_video`, `get_job_status`, and `search_video` to explicitly distinguish partial window analyses from whole-video coverage.
