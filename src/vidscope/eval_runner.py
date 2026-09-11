@@ -17,6 +17,7 @@ from .eval_harness import (
     InvocationTrace,
     ProtocolScorecard,
     SemanticScorecard,
+    aggregate_protocol_scorecards,
     check_hallucination_rejection,
     compute_boundary_mae,
     compute_kendall_tau,
@@ -513,8 +514,12 @@ class OMPEvalRunner:
         env = {**os.environ}
         if self.mock_mcp:
             env["VIDSCOPE_MOCK_MCP"] = "1"
+        else:
+            env.pop("VIDSCOPE_MOCK_MCP", None)
         if self.mock_async is not None:
             env["VIDSCOPE_MOCK_ASYNC"] = str(self.mock_async)
+        else:
+            env.pop("VIDSCOPE_MOCK_ASYNC", None)
 
         start_time = time.perf_counter()
         proc = subprocess.run(
@@ -525,6 +530,12 @@ class OMPEvalRunner:
             timeout=self.timeout_seconds,
         )
         duration = time.perf_counter() - start_time
+        if proc.returncode != 0 and proc.stderr:
+            logger.warning(
+                "OMP process returned exit code %d: %s",
+                proc.returncode,
+                proc.stderr.strip()[:500],
+            )
 
         traces, final_text, raw_events = parse_omp_stream(proc.stdout.splitlines())
         scorecard = evaluate_invocation_traces(traces)
@@ -572,7 +583,9 @@ class OMPEvalRunner:
                     if on_run_complete:
                         on_run_complete(completed_count, runs, res)
 
-        cumulative_scorecard = evaluate_invocation_traces(all_traces)
+        cumulative_scorecard = aggregate_protocol_scorecards(
+            [r.scorecard for r in results]
+        )
         return cumulative_scorecard, results
 
     def run_protocol_suite(
@@ -636,7 +649,8 @@ class OMPEvalRunner:
                         on_run_complete(sc.id, completed, actual_total, res)
 
         duration = time.perf_counter() - start_time
-        scorecard = evaluate_invocation_traces(all_traces)
+        all_runs = [r for r_list in scenario_results.values() for r in r_list]
+        scorecard = aggregate_protocol_scorecards([r.scorecard for r in all_runs])
 
         stats: dict[str, ScenarioStats] = {}
         for sc_id, r_list in scenario_results.items():
@@ -681,6 +695,7 @@ class OMPEvalRunner:
 
         overall_start = time.perf_counter()
         all_traces: list[InvocationTrace] = []
+        task_scorecards: list[ProtocolScorecard] = []
         task_outcomes: list[dict[str, Any]] = []
 
         tiou_scores: list[float] = []
@@ -698,6 +713,7 @@ class OMPEvalRunner:
             )
             result = self.run_prompt(prompt)
             all_traces.extend(result.traces)
+            task_scorecards.append(result.scorecard)
 
             pred_range = extract_predicted_time_range(result.final_text)
             if pred_range is not None:
@@ -739,6 +755,7 @@ class OMPEvalRunner:
             )
             result = self.run_prompt(prompt)
             all_traces.extend(result.traces)
+            task_scorecards.append(result.scorecard)
 
             # True chronological order
             gt_order = [
@@ -768,6 +785,7 @@ class OMPEvalRunner:
             )
             result = self.run_prompt(prompt)
             all_traces.extend(result.traces)
+            task_scorecards.append(result.scorecard)
 
             rejected = check_hallucination_rejection(result.final_text)
             if rejected:
@@ -789,12 +807,18 @@ class OMPEvalRunner:
             )
             result = self.run_prompt(prompt)
             all_traces.extend(result.traces)
+            task_scorecards.append(result.scorecard)
 
-            gt_norm = ret.ground_truth_answer.lower()
-            resp_norm = result.final_text.lower()
-            matched = gt_norm in resp_norm or any(
-                token in resp_norm for token in gt_norm.split() if len(token) > 4
-            )
+            gt_norm = ret.ground_truth_answer.strip().lower()
+            resp_norm = result.final_text.strip().lower()
+            mode = (ret.verification_mode or "exact_or_llm_judge").strip().lower()
+            if mode in ("exact", "exact_match"):
+                matched = gt_norm == resp_norm
+            elif mode in ("contains", "exact_or_llm_judge"):
+                matched = gt_norm in resp_norm
+            else:
+                matched = gt_norm in resp_norm
+
             if matched:
                 retrieval_matches += 1
             task_outcomes.append(
@@ -809,7 +833,7 @@ class OMPEvalRunner:
         total_duration = time.perf_counter() - overall_start
 
         # Aggregate Protocol & Semantic scorecards
-        protocol_card = evaluate_invocation_traces(all_traces)
+        protocol_card = aggregate_protocol_scorecards(task_scorecards)
         semantic_card = SemanticScorecard(
             localization_evals=len(dataset.events),
             localization_tiou_avg=round(

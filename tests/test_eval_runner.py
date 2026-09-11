@@ -59,8 +59,14 @@ def test_compute_kendall_tau() -> None:
     assert compute_kendall_tau(["e3", "e2", "e1"], ["e1", "e2", "e3"]) == -1.0
     # One pair inverted: e1, e3, e2 vs e1, e2, e3 (pairs: (e1,e2) conc, (e1,e3) conc, (e2,e3) disc) -> (2-1)/3 = 0.3333
     assert compute_kendall_tau(["e1", "e3", "e2"], ["e1", "e2", "e3"]) == 0.3333
-    # Single element
+    # Single element match and mismatch
     assert compute_kendall_tau(["e1"], ["e1"]) == 1.0
+    assert compute_kendall_tau(["e2"], ["e1"]) == -1.0
+    # Empty or missing prediction
+    assert compute_kendall_tau([], ["e1", "e2", "e3"]) == -1.0
+    assert compute_kendall_tau([], ["e1"]) == -1.0
+    # Partial prediction with missing elements
+    assert compute_kendall_tau(["e1", "e2"], ["e1", "e2", "e3"]) == -0.3333
 
 
 def test_check_hallucination_rejection() -> None:
@@ -442,3 +448,74 @@ def test_cli_eval_missing_binary_error() -> None:
     )
     assert res.exit_code == 1
     assert "Error: OMP binary not found at '/nonexistent/custom/omp_bin'" in res.output
+
+
+def test_aggregate_protocol_scorecards() -> None:
+    from vidscope.eval_harness import (
+        InvocationTrace,
+        ProtocolScorecard,
+        aggregate_protocol_scorecards,
+    )
+
+    sc1 = ProtocolScorecard(
+        total_invocations=2,
+        schema_validation_errors=1,
+        cadence_violations=0,
+        successful_invocations=1,
+        traces=[
+            InvocationTrace(
+                tool_name="get_video_info",
+                arguments={},
+                timestamp_seconds=1.0,
+                response={},
+            )
+        ],
+    )
+    sc2 = ProtocolScorecard(
+        total_invocations=3,
+        schema_validation_errors=0,
+        cadence_violations=1,
+        successful_invocations=2,
+        traces=[
+            InvocationTrace(
+                tool_name="get_job_status",
+                arguments={},
+                timestamp_seconds=2.0,
+                response={},
+            )
+        ],
+    )
+    agg = aggregate_protocol_scorecards([sc1, sc2])
+    assert agg.total_invocations == 5
+    assert agg.schema_validation_errors == 1
+    assert agg.cadence_violations == 1
+    assert agg.successful_invocations == 3
+    assert len(agg.traces) == 2
+
+
+def test_demo_dataset_loading() -> None:
+    demo_path = Path("benchmarks/eval_harness/datasets/demo.yaml")
+    assert demo_path.is_file()
+    ds = load_benchmark_dataset(str(demo_path))
+    assert ds.video_id == "demo"
+    assert len(ds.events) == 3
+    assert len(ds.absent_events) == 2
+    assert len(ds.ordering_tasks) == 1
+    assert len(ds.retrieval_queries) == 2
+
+
+def test_mock_job_reuse_no_unbound_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vidscope.mcp import analyze_video
+
+    monkeypatch.setenv("VIDSCOPE_MOCK_MCP", "1")
+    # First call creates job
+    res1 = analyze_video("mock://test_reuse.mp4", 0.0, 10.0, 10.0)
+    assert isinstance(res1, dict)
+    assert res1["status"] in ("completed", "processing")
+    job_id = res1["job_id"]
+
+    # Second call with identical params reuses existing job without UnboundLocalError
+    res2 = analyze_video("mock://test_reuse.mp4", 0.0, 10.0, 10.0)
+    assert isinstance(res2, dict)
+    assert res2["job_id"] == job_id
+    assert "retry_after_seconds" in res2 or res2["status"] == "completed"

@@ -150,12 +150,13 @@ class ProtocolScorecard:
         }
 
     def to_markdown_table(self) -> str:
+        status_polls = sum(1 for t in self.traces if t.tool_name == "get_job_status")
         lines = [
             "| Metric | Total | Violations | Rate (%) | Target |",
             "|:---|:---|:---|:---|:---|",
             f"| **Tool Call Error Rate (TCER)** | {self.total_invocations} | {self.schema_validation_errors} | {self.tcer * 100:.1f}% | 0.0% |",
             f"| **Tool Sequencing Error Rate (TSER)** | {self.total_invocations} | {self.sequencing_errors} | {self.tser * 100:.1f}% | 0.0% |",
-            f"| **Polling Cadence Violations** | {max(0, self.total_invocations - 1)} | {self.cadence_violations} | {self.cadence_violation_rate * 100:.1f}% | 0.0% |",
+            f"| **Polling Cadence Violations** | {status_polls} | {self.cadence_violations} | {self.cadence_violation_rate * 100:.1f}% | 0.0% |",
         ]
         return "\n".join(lines)
 
@@ -232,29 +233,44 @@ def compute_boundary_mae(pred: tuple[float, float], gt: tuple[float, float]) -> 
     return round(mae, 3)
 
 
+def aggregate_protocol_scorecards(
+    scorecards: list[ProtocolScorecard],
+) -> ProtocolScorecard:
+    """Aggregate individual run scorecards without cross-run cadence interference."""
+    agg = ProtocolScorecard()
+    for sc in scorecards:
+        agg.total_invocations += sc.total_invocations
+        agg.schema_validation_errors += sc.schema_validation_errors
+        agg.sequencing_errors += sc.sequencing_errors
+        agg.cadence_violations += sc.cadence_violations
+        agg.successful_invocations += sc.successful_invocations
+        agg.traces.extend(sc.traces)
+    return agg
+
+
 def compute_kendall_tau(pred_order: list[str], gt_order: list[str]) -> float:
     """Compute Kendall's tau rank correlation between predicted and true sequence."""
-    common = [x for x in gt_order if x in pred_order]
-    n = len(common)
-    if n <= 1:
-        return 1.0
+    if len(gt_order) <= 1:
+        return 1.0 if pred_order == gt_order else -1.0
 
+    total_gt_pairs = len(gt_order) * (len(gt_order) - 1) / 2.0
     pred_ranks = {item: idx for idx, item in enumerate(pred_order)}
 
     concordant = 0
     discordant = 0
-    for i in range(n):
-        for j in range(i + 1, n):
-            item_a = common[i]
-            item_b = common[j]
-            # In gt_order, item_a precedes item_b.
-            if pred_ranks[item_a] < pred_ranks[item_b]:
-                concordant += 1
+    for i in range(len(gt_order)):
+        for j in range(i + 1, len(gt_order)):
+            item_a = gt_order[i]
+            item_b = gt_order[j]
+            if item_a in pred_ranks and item_b in pred_ranks:
+                if pred_ranks[item_a] < pred_ranks[item_b]:
+                    concordant += 1
+                else:
+                    discordant += 1
             else:
                 discordant += 1
 
-    total_pairs = (n * (n - 1)) / 2.0
-    tau = (concordant - discordant) / total_pairs
+    tau = (concordant - discordant) / total_gt_pairs
     return round(tau, 4)
 
 

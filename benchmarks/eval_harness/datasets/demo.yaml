@@ -1,0 +1,43 @@
+video_id: demo
+source: mock://presentation.mp4
+duration_seconds: 120.0
+title: "Demo Presentation Benchmark"
+domain: "presentation"
+
+events:
+  - id: intro_slide
+    description: "Speaker introduces the presentation topic on the title slide."
+    time_range: [0.0, 30.0]
+    modality: multimodal
+    visual_text: "Presentation Title"
+    supporting_quote: "Speaker discusses topic"
+  - id: detailed_analysis
+    description: "Detailed walkthrough of section 1 metrics."
+    time_range: [30.0, 90.0]
+    modality: speech
+    supporting_quote: "Let us examine the metrics"
+  - id: conclusion_slide
+    description: "Summary and conclusion slide is displayed."
+    time_range: [90.0, 120.0]
+    modality: visual
+    visual_text: "Conclusion and Q&A"
+
+absent_events:
+  - id: absent_fire_alarm
+    description: "A loud fire alarm rings in the room."
+    plausibility: high
+  - id: absent_alien_visit
+    description: "An extraterrestrial spaceship lands in the background."
+    plausibility: low
+
+ordering_tasks:
+  - task_id: chronological_demo
+    event_ids: ["intro_slide", "detailed_analysis", "conclusion_slide"]
+
+retrieval_queries:
+  - query: "What is the primary topic discussed in the first section?"
+    ground_truth_answer: "Speaker discusses topic"
+    verification_mode: contains
+  - query: "What text is displayed on the final conclusion slide?"
+    ground_truth_answer: "Conclusion and Q&A"
+    verification_mode: contains

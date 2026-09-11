@@ -230,9 +230,10 @@ time to completion.
   "next_since_chunk": 0,
   "has_more": true,
   "next_action": "get_job_status",
+  "retry_after_seconds": 6.2,
   "estimated_remaining_seconds": 6.2,
   "initial_timeline": [],
-  "hint": "Poll get_job_status(job_id='job_e7b29a14-8f43-4c9b-98f2-1d573be04f21')"
+  "hint": "Poll get_job_status(job_id='job_e7b29a14-8f43-4c9b-98f2-1d573be04f21', since_chunk=0)"
 }
 ```
 
@@ -273,6 +274,7 @@ timeline sections, preventing token waste on repeated calls.
   "progress_percentage": 100.0,
   "completed_chunks": 1,
   "total_chunks": 1,
+  "retry_after_seconds": 0.0,
   "estimated_remaining_seconds": 0.0,
   "coverage": {
     "is_full_video": false,
@@ -319,7 +321,6 @@ timeline sections, preventing token waste on repeated calls.
   "next_since_chunk": 1,
   "has_more": false,
   "next_action": null,
-  "retry_after_seconds": 0.0,
   "message": "Analysis completed successfully (1/1 chunks). Returned 1 timeline section(s).",
   "error": null
 }

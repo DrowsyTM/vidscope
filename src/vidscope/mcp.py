@@ -571,6 +571,11 @@ def analyze_video(
 
     try:
         job_key = f"{source}_{start_seconds}_{end_seconds}_{chunk_duration_seconds}"
+        sim_async = (
+            is_mock_async_requested(source, start_seconds, end_seconds)
+            if is_mock_mcp_enabled()
+            else False
+        )
         existing_job = global_job_manager.find_job_by_key(job_key)
         if existing_job is not None and existing_job.status in (
             "processing",
@@ -587,11 +592,6 @@ def analyze_video(
                     curr = nxt
             job = global_job_manager.create_job(source, initial_chunks, job_key=job_key)
 
-            sim_async = (
-                is_mock_async_requested(source, start_seconds, end_seconds)
-                if is_mock_mcp_enabled()
-                else False
-            )
             if is_mock_mcp_enabled():
                 thread = threading.Thread(
                     target=mock_process_job_chunks,
@@ -682,9 +682,10 @@ def analyze_video(
             "next_since_chunk": len(job.available_sections),
             "has_more": True,
             "next_action": "get_job_status",
+            "retry_after_seconds": remaining,
             "estimated_remaining_seconds": remaining,
             "initial_timeline": job.available_sections,
-            "hint": f"Poll get_job_status(job_id='{job.job_id}')",
+            "hint": f"Poll get_job_status(job_id='{job.job_id}', since_chunk={len(job.available_sections)})",
         }
     except (VideoAnalyzerFailure, SourceBackendFailure) as exc:
         payload = _error_payload(exc.error)
@@ -732,10 +733,12 @@ def get_job_status(
             diagnostics={
                 "job_id": job_id,
                 "next_action": "analyze_video",
+                "retry_after_seconds": 0,
             },
         )
         payload = _error_payload(error)
         payload["next_action"] = "analyze_video"
+        payload["retry_after_seconds"] = 0
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     if job.status == "failed":
@@ -832,10 +835,12 @@ def view_frame(
                 diagnostics={
                     "frame_id": frame_id,
                     "next_action": "analyze_video",
+                    "retry_after_seconds": 0,
                 },
             )
             payload = _error_payload(error)
             payload["next_action"] = "analyze_video"
+            payload["retry_after_seconds"] = 0
             return ToolResult(
                 content=payload, structured_content=payload, is_error=True
             )
@@ -1057,10 +1062,12 @@ def search_video(
             diagnostics={
                 "job_id": job_id,
                 "next_action": "analyze_video",
+                "retry_after_seconds": 0,
             },
         )
         payload = _error_payload(error)
         payload["next_action"] = "analyze_video"
+        payload["retry_after_seconds"] = 0
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     if job.status == "failed":
@@ -1093,12 +1100,13 @@ def search_video(
                 "status": job.status,
                 "progress_percentage": round(job.progress_percentage, 1),
                 "completed_chunks": job.completed_chunks,
-                "total_chunks": job.total_chunks,
+                "retry_after_seconds": remaining,
                 "estimated_remaining_seconds": remaining,
                 "next_action": "get_job_status",
             },
         )
         payload = _error_payload(error)
+        payload["retry_after_seconds"] = remaining
         payload["estimated_remaining_seconds"] = remaining
         payload["next_action"] = "get_job_status"
         return ToolResult(content=payload, structured_content=payload, is_error=True)
@@ -1224,10 +1232,12 @@ def get_transcript(
             diagnostics={
                 "job_id": job_id,
                 "next_action": "analyze_video",
+                "retry_after_seconds": 0,
             },
         )
         payload = _error_payload(error)
         payload["next_action"] = "analyze_video"
+        payload["retry_after_seconds"] = 0
         return ToolResult(content=payload, structured_content=payload, is_error=True)
 
     if job.status == "failed":
@@ -1260,12 +1270,13 @@ def get_transcript(
                 "status": job.status,
                 "progress_percentage": round(job.progress_percentage, 1),
                 "completed_chunks": job.completed_chunks,
-                "total_chunks": job.total_chunks,
+                "retry_after_seconds": remaining,
                 "estimated_remaining_seconds": remaining,
                 "next_action": "get_job_status",
             },
         )
         payload = _error_payload(error)
+        payload["retry_after_seconds"] = remaining
         payload["estimated_remaining_seconds"] = remaining
         payload["next_action"] = "get_job_status"
         return ToolResult(content=payload, structured_content=payload, is_error=True)

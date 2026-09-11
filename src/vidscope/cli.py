@@ -266,13 +266,13 @@ def eval_command(
         ),
     ] = False,
     runs: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--runs",
             "-n",
             help="Number of iterations to execute for prompt or protocol suite.",
         ),
-    ] = 1,
+    ] = None,
     concurrency: Annotated[
         int,
         typer.Option(
@@ -346,13 +346,18 @@ def eval_command(
         )
 
         if protocol_suite:
-            target_runs = runs if runs > 1 else 100
+            target_runs = runs if runs is not None else 100
             typer.echo(
                 f"Running Phase 1 Protocol Hygiene Suite ({target_runs} runs, concurrency={concurrency}, thinking={thinking})..."
             )
 
             def _on_suite_run(sc_id: str, done: int, total: int, res: Any) -> None:
-                status = "OK" if not res.scorecard.schema_validation_errors else "FAIL"
+                has_error = (
+                    res.scorecard.schema_validation_errors > 0
+                    or res.scorecard.sequencing_errors > 0
+                    or res.scorecard.cadence_violations > 0
+                )
+                status = "FAIL" if has_error else "OK"
                 typer.echo(
                     f"  [{done}/{total}] scenario={sc_id} calls={len(res.traces)} ({status}) in {res.duration_seconds:.2f}s"
                 )
@@ -372,9 +377,10 @@ def eval_command(
             return
 
         if prompt:
-            if runs > 1:
+            repeat_runs = runs if runs is not None else 1
+            if repeat_runs > 1:
                 typer.echo(
-                    f"Running prompt repeatedly ({runs} runs, concurrency={concurrency}, thinking={thinking})..."
+                    f"Running prompt repeatedly ({repeat_runs} runs, concurrency={concurrency}, thinking={thinking})..."
                 )
 
                 def _on_prompt_run(cur: int, tot: int, res: Any) -> None:
@@ -384,16 +390,16 @@ def eval_command(
 
                 scorecard, _ = runner.run_repeated_prompt(
                     prompt,
-                    runs=runs,
+                    runs=repeat_runs,
                     concurrency=concurrency,
                     on_run_complete=_on_prompt_run,
                 )
                 report_md = (
-                    f"# Repeated Prompt Protocol Scorecard ({runs} runs)\n\n"
+                    f"# Repeated Prompt Protocol Scorecard ({repeat_runs} runs)\n\n"
                     + "## 1. Protocol Hygiene Scorecard\n\n"
                     + scorecard.to_markdown_table()
                     + "\n\n## 2. Tool Usage Statistics\n\n"
-                    + scorecard.tool_usage_markdown_table(total_runs=runs)
+                    + scorecard.tool_usage_markdown_table(total_runs=repeat_runs)
                 )
                 typer.echo("\n" + report_md)
 
