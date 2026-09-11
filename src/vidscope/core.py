@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import importlib.util
 import os
 import shutil
@@ -180,6 +181,18 @@ def _available_binary(configured: Any, name: str) -> bool:
     return shutil.which(name) is not None
 
 
+@functools.cache
+def _module_importable(name: str) -> bool:
+    # import_module (not find_spec): a present-but-broken install must report unavailable.
+    # Broad catch: transitive native init may raise OSError/RuntimeError, not just ImportError.
+    # Cached: the import cost is paid once per process; restarts pick up environment changes.
+    try:
+        importlib.import_module(name)
+    except Exception:
+        return False
+    return True
+
+
 def _capabilities(context: AnalysisContext, inspection: Any) -> Capabilities:
     settings = get_settings()
     media_injected = "media_backend" in context._provided
@@ -189,8 +202,8 @@ def _capabilities(context: AnalysisContext, inspection: Any) -> Capabilities:
     return Capabilities(
         ffprobe=media_injected or _available_binary(settings.ffprobe_bin, "ffprobe"),
         ffmpeg=media_injected or _available_binary(settings.ffmpeg_bin, "ffmpeg"),
-        asr=asr_injected or importlib.util.find_spec("faster_whisper") is not None,
-        vad=vad_injected or importlib.util.find_spec("silero_vad") is not None,
+        asr=asr_injected or _module_importable("faster_whisper"),
+        vad=vad_injected or _module_importable("silero_vad"),
         tesseract=ocr_injected
         or _available_binary(settings.tesseract_bin, "tesseract"),
         captions=True,

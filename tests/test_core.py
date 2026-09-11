@@ -4,6 +4,7 @@ import base64
 import builtins
 import hashlib
 import http.client
+import importlib.util
 import json
 import os
 import re
@@ -1067,3 +1068,35 @@ def test_transcribe_offsets_segments_and_words_by_start_seconds(
     assert row["words"][0]["end_seconds"] == 184.0
     assert row["words"][1]["start_seconds"] == 184.1
     assert row["words"][1]["end_seconds"] == 188.0
+
+
+def test_present_but_broken_module_reports_unimportable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vidscope.core import _module_importable
+
+    pkg = tmp_path / "broken_probe_mod"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        "raise ImportError('simulated broken native dependency')\n",
+        encoding="utf-8",
+    )
+    # Native shared-library load failures surface as OSError, not ImportError.
+    os_pkg = tmp_path / "broken_native_mod"
+    os_pkg.mkdir()
+    (os_pkg / "__init__.py").write_text(
+        "raise OSError('simulated missing shared library')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    # Present on disk, so spec discovery succeeds ...
+    assert importlib.util.find_spec("broken_probe_mod") is not None
+    assert importlib.util.find_spec("broken_native_mod") is not None
+    _module_importable.cache_clear()
+    try:
+        # ... but the import itself fails, so the capability is unavailable.
+        assert _module_importable("broken_probe_mod") is False
+        assert _module_importable("broken_native_mod") is False
+        assert _module_importable("json") is True
+    finally:
+        _module_importable.cache_clear()

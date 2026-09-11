@@ -76,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Dockerfile installation by removing `--no-index` from local package install, enabling PEP 517 build backend resolution.
 - Enforced `AnalysisTask` enum type safety and `TextContent` union narrowing for mypy compliance.
 - Fixed audio track selection in `_format_choice` with multi-tier language-aware ranking, prioritizing requested language tracks, `original`, and `default` audio over foreign language dubs with slightly higher bitrates.
+- Fixed ASR/VAD capability detection in `core.py` to probe `faster_whisper`/`silero_vad` with a real import instead of `find_spec`, so present-but-broken installs report unavailable instead of scheduling stages that can never run.
 - Fixed chunk timestamp offset in `core.py` transcribe stage so transcribed segments and word timestamps are absolute (`offset = float(request.time_range.start_seconds)`), resolving overlapping duplicate segments and enabling full multi-chunk transcript aggregation.
 - Fixed Silero VAD timestamp calculation in `SileroVadBackend.detect` for chunk offsets (`start_seconds > 0`).
 - Added independent transcript coverage metrics to `JobState.coverage()`: `transcript_start_seconds`, `transcript_end_seconds`, `transcript_segments_count`, and `transcript_status`.
