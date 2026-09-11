@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added automatic device detection (`cuda` when CUDA GPU is available, fallback to `cpu` with `int8` quantization), VRAM-aware default model selection (`base.en`/`base` on CUDA with $\ge 1\text{ GB}$ VRAM; `tiny.en`/`tiny` on CPU or low-VRAM), and multilingual model fallback (`base`/`tiny` when `language != "en"`).
 - Added `vidscope doctor` CLI diagnostic command checking FFmpeg, FFprobe, Tesseract, Whisper/CUDA device, Node.js runtime, PO token provider status, and cookie files with `--json` support.
 - Added `vidscope setup-pot` CLI helper command to automatically clone and build the standalone on-demand PO token generator (`generate_once.js`).
+- Added `vidscope docs [--check]` CLI command and automated documentation generator (`scripts/generate_mcp_docs.py`) for compiling FastMCP tool schemas and realistic contract examples into `docs/MCP_REFERENCE.md`.
+- Added automated benchmark reporting (`scripts/generate_benchmark_report.py`) compiling pytest-benchmark JSON into `BENCHMARKS.md` and GitHub Step Summary.
+- Added Tesseract OCR and Silero VAD latency and memory benchmarks in `benchmarks/test_benchmarks.py`.
 - Added ASR accuracy evaluation benchmark (`benchmarks/test_asr_accuracy.py`) calculating Word Error Rate (WER) and timestamp drift against reference transcripts.
 - Added DASH video and audio stream pairing in `_format_choice` to download and mux separate video-only and audio-only tracks within size constraints, enabling local ASR transcription for modern YouTube sources.
 - Added `soundfile` waveform loading in `SileroVadBackend` with channel-averaging and resampling fallback, removing runtime dependency on `torchcodec` under torchaudio >= 2.6.

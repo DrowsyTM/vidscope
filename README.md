@@ -189,6 +189,9 @@ Add `vidscope` to `.cursor/mcp.json`:
 | `search_video` | Post-analysis transcript grep | Sync (~100ms) | Grep across analyzed speech transcripts (`job_id`) with regex, case-sensitivity, and windowed `coverage` metadata. Strictly gated to completed jobs. |
 | `get_transcript` | Targeted dialogue retrieval | Sync (~50ms) | Retrieve timestamped dialogue segments and joined text for a specific time window (`start_seconds`, `end_seconds`, `max_duration_seconds`). Strictly gated to completed jobs. |
 
+> For complete JSON schemas, parameter constraints, error envelopes, and realistic input/output fixtures, see the [MCP Tool Reference](docs/MCP_REFERENCE.md).
+> For microbenchmark measurements, ASR accuracy metrics, and stage latency budgets, see [Performance Benchmarks](BENCHMARKS.md).
+
 ### Recommended Agent Workflow
 
 ```mermaid
