@@ -140,5 +140,9 @@ def test_benchmark_vad_segmentation(benchmark: Any) -> None:
     from vidscope.backends.vad import SileroVadBackend
 
     backend = SileroVadBackend()
+    module = backend._module()
+    load = backend.loader or module.load_silero_vad
+    model = load(onnx=False)
+    backend.loader = lambda **_: model
     result = benchmark(backend.detect, fixture_path)
     assert result is not None

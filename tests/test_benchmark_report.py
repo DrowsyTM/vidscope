@@ -87,6 +87,15 @@ def test_run_benchmark_report_with_step_summary(
         encoding="utf-8"
     )
 
+    # Test execution with step_summary=False (default) does not write to GITHUB_STEP_SUMMARY
+    output_md_2 = tmp_path / "BENCHMARKS_2.md"
+    summary_file_2 = tmp_path / "step_summary_2.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_file_2))
+    code_2 = run_benchmark_report(input_json, output_md_2, step_summary=False)
+    assert code_2 == 0
+    assert output_md_2.is_file()
+    assert not summary_file_2.exists()
+
     # Test execution when input file does not exist
     missing_file = tmp_path / "nonexistent.json"
     err_code = run_benchmark_report(missing_file, output_md)

@@ -3,8 +3,8 @@
 > Last Updated: **2026-09-10 00:36:43 UTC**
 > System: **Linux 6.8.0-139-generic** (`x86_64`) | CPU: **Intel(R) Core(TM) i5-7400 CPU @ 3.00GHz** (4 cores) | Python: **3.12.3**
 
-This document publishes deterministic microbenchmark timings, OCR extraction throughput,
-ASR accuracy benchmarks, and stage-by-stage pipeline latency budgets for Vidscope.
+This document compiles measured microbenchmark timings (Section 1), architectural pipeline
+latency and memory budgets (Section 2), and nominal ASR accuracy reference standards (Section 3).
 
 ---
 
@@ -45,7 +45,6 @@ Below is the nominal latency and resource overhead budget on standard commodity 
 
 ---
 
-## 3. ASR Accuracy & Alignment Evaluation
 ## 3. ASR Accuracy & Alignment Reference Targets
 
 > [!NOTE]

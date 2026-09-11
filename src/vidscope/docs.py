@@ -249,10 +249,16 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
         "response": {
             "content": [
                 {
-                    "frame_id": "frame_0000_003600",
-                    "timestamp_seconds": 36.0,
-                    "formatted_time": "00:00:36",
-                    "ocr_text": "Rick Astley - Whenever You Need Somebody",
+                    "type": "text",
+                    "text": json.dumps(
+                        {
+                            "frame_id": "frame_0000_003600",
+                            "timestamp_seconds": 36.0,
+                            "formatted_time": "00:00:36",
+                            "ocr_text": "Rick Astley - Whenever You Need Somebody",
+                        },
+                        indent=2,
+                    ),
                 },
                 {
                     "type": "image",
@@ -479,13 +485,23 @@ async def generate_mcp_markdown(server: Any = None) -> str:
     lines.append("|:---|:---|:---|")
 
     for r in resources:
-        lines.append(
-            f"| `{getattr(r, 'uri', '')}` | `{r.name}` | Server identity, capabilities, and tool status. |"
+        desc = (
+            (
+                getattr(r, "description", None)
+                or "Server capabilities, active version, and available resource URI templates."
+            )
+            .strip()
+            .replace("\n", " ")
         )
+        lines.append(f"| `{getattr(r, 'uri', '')}` | `{r.name}` | {desc} |")
     for rt in resource_templates:
-        lines.append(
-            f"| `{rt.uri_template}` | `{rt.name}` | Local run artifacts and DAG execution graphs. |"
-        )
+        fallback = {
+            "read_artifact": "Retrieve raw artifact content or paginated text by run ID and artifact ID.",
+            "read_manifest": "Retrieve execution manifest and output file metadata for an analysis run.",
+            "read_plan": "Retrieve deterministic DAG execution plan JSON for an analysis run.",
+        }.get(rt.name, "Local run artifacts and DAG execution graphs.")
+        desc = (getattr(rt, "description", None) or fallback).strip().replace("\n", " ")
+        lines.append(f"| `{rt.uri_template}` | `{rt.name}` | {desc} |")
 
     lines.append("")
     lines.append("---")

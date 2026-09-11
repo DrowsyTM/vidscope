@@ -1345,6 +1345,7 @@ def _read_artifact_resource(
     offset: int = 0,
     limit: int = 200,
 ) -> str | bytes:
+    """Retrieve raw artifact content or paginated text by run ID and artifact ID."""
     uri = f"vidscope://runs/{run_id}/artifacts/{artifact_id}"
     result = read_artifact_resource(uri, page=page, offset=offset, limit=limit)
     if isinstance(result, ArtifactStoreFailure):
@@ -1354,6 +1355,7 @@ def _read_artifact_resource(
 
 @mcp.resource("vidscope://runs/{run_id}/manifest", name="read_manifest")
 def _read_manifest_resource(run_id: str) -> str:
+    """Retrieve execution manifest and output file metadata for an analysis run."""
     settings = get_settings()
     root = settings.allowed_output_root or Path.cwd()
     try:
@@ -1367,6 +1369,7 @@ def _read_manifest_resource(run_id: str) -> str:
 
 @mcp.resource("vidscope://runs/{run_id}/plan", name="read_plan")
 def _read_plan_resource(run_id: str) -> str:
+    """Retrieve deterministic DAG execution plan JSON for an analysis run."""
     settings = get_settings()
     root = settings.allowed_output_root or Path.cwd()
     try:

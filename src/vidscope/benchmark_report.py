@@ -57,8 +57,8 @@ def generate_benchmark_markdown(data: dict[str, Any]) -> str:
         f"> Last Updated: **{now_iso}**  ",
         f"> System: **{system_os}** (`{arch}`) | CPU: **{cpu_brand}** ({cpu_cores} cores) | Python: **{python_ver}**",
         "",
-        "This document publishes deterministic microbenchmark timings, OCR extraction throughput,",
-        "ASR accuracy benchmarks, and stage-by-stage pipeline latency budgets for Vidscope.",
+        "This document compiles measured microbenchmark timings (Section 1), architectural pipeline",
+        "latency and memory budgets (Section 2), and nominal ASR accuracy reference standards (Section 3).",
         "",
         "---",
         "",
@@ -167,7 +167,7 @@ def run_benchmark_report(
     print(f"Successfully generated benchmark report in '{output_path}'.")
 
     step_summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if (step_summary or step_summary_path) and step_summary_path:
+    if step_summary and step_summary_path:
         with open(step_summary_path, "a", encoding="utf-8") as f:
             f.write("\n" + markdown.strip() + "\n")
         print(

@@ -447,10 +447,8 @@ given source and timestamp_seconds.
 {
   "content": [
     {
-      "frame_id": "frame_0000_003600",
-      "timestamp_seconds": 36.0,
-      "formatted_time": "00:00:36",
-      "ocr_text": "Rick Astley - Whenever You Need Somebody"
+      "type": "text",
+      "text": "{\n  \"frame_id\": \"frame_0000_003600\",\n  \"timestamp_seconds\": 36.0,\n  \"formatted_time\": \"00:00:36\",\n  \"ocr_text\": \"Rick Astley - Whenever You Need Somebody\"\n}"
     },
     {
       "type": "image",
@@ -469,10 +467,10 @@ Vidscope provides static and dynamic resources for inspecting runs, DAG plans, a
 
 | Resource URI / Template | Name | Description |
 |:---|:---|:---|
-| `vidscope://info` | `server_info` | Server identity, capabilities, and tool status. |
-| `vidscope://runs/{run_id}/artifacts/{artifact_id}{?page,offset,limit}` | `read_artifact` | Local run artifacts and DAG execution graphs. |
-| `vidscope://runs/{run_id}/manifest` | `read_manifest` | Local run artifacts and DAG execution graphs. |
-| `vidscope://runs/{run_id}/plan` | `read_plan` | Local run artifacts and DAG execution graphs. |
+| `vidscope://info` | `server_info` | Server capabilities, active version, and available resource URI templates. |
+| `vidscope://runs/{run_id}/artifacts/{artifact_id}{?page,offset,limit}` | `read_artifact` | Retrieve raw artifact content or paginated text by run ID and artifact ID. |
+| `vidscope://runs/{run_id}/manifest` | `read_manifest` | Retrieve execution manifest and output file metadata for an analysis run. |
+| `vidscope://runs/{run_id}/plan` | `read_plan` | Retrieve deterministic DAG execution plan JSON for an analysis run. |
 
 ---
 
