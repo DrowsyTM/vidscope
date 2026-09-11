@@ -29,8 +29,9 @@ RUN set -e; \
     pip wheel --no-cache-dir --no-deps -w /tmp/wheels . && \
     HASH=$(pip hash /tmp/wheels/vidscope-*.whl | sed -n 's/^ *--hash=//p') && \
     VER=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])") && \
-    pip install --no-cache-dir --user --no-deps --no-index --find-links=/tmp/wheels --require-hashes "vidscope==$VER" --hash="$HASH" && \
-    rm -rf /tmp/wheels
+    printf 'vidscope==%s --hash=%s\n' "$VER" "$HASH" > /tmp/pinned.txt && \
+    pip install --no-cache-dir --user --no-deps --no-index --find-links=/tmp/wheels --require-hashes -r /tmp/pinned.txt && \
+    rm -rf /tmp/wheels /tmp/pinned.txt
 
 ENTRYPOINT ["vidscope"]
 CMD ["mcp"]
