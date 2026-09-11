@@ -42,6 +42,11 @@ asr = [
   "faster-whisper>=1.2.0",
   "silero-vad>=6.2.0",
   "soundfile>=0.12.0",
+  # ctranslate2 (via faster-whisper) links CUDA 12 (libcublas.so.12), while
+  # torch>=2.14 pulls CUDA 13 nvidia wheels, so declare the CUDA 12 shims
+  # explicitly; the layouts coexist under site-packages/nvidia/.
+  "nvidia-cublas-cu12>=12; sys_platform == 'linux'",
+  "nvidia-cuda-runtime-cu12>=12; sys_platform == 'linux'",
 ]
 vad = [
   "silero-vad>=6.2.0",
@@ -51,6 +56,8 @@ all = [
   "faster-whisper>=1.2.0",
   "silero-vad>=6.2.0",
   "soundfile>=0.12.0",
+  "nvidia-cublas-cu12>=12; sys_platform == 'linux'",
+  "nvidia-cuda-runtime-cu12>=12; sys_platform == 'linux'",
 ]
 dev = [
   "pytest>=8.0",
