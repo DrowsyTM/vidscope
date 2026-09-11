@@ -5,6 +5,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.agents
 htmlcov/
 dist/
 build/
@@ -15,3 +16,4 @@ coverage.xml
 *.ytdl
 .env
 temp-*
+benchmark-results*.json
