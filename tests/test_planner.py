@@ -210,6 +210,55 @@ def test_youtube_url_always_routes_to_asr_even_with_metadata_captions(
     assert "captions" not in stage_names
 
 
+def test_is_youtube_source_hostname_validation() -> None:
+    from vidscope.planner import _is_youtube_source
+
+    # Valid YouTube hosts
+    assert _is_youtube_source("https://www.youtube.com/watch?v=aircAruvnKk") is True
+    assert _is_youtube_source("https://youtube.com/watch?v=aircAruvnKk") is True
+    assert _is_youtube_source("https://m.youtube.com/watch?v=aircAruvnKk") is True
+    assert _is_youtube_source("https://youtu.be/aircAruvnKk") is True
+    assert (
+        _is_youtube_source("https://www.youtube-nocookie.com/embed/aircAruvnKk") is True
+    )
+    assert _is_youtube_source("youtube.com/watch?v=aircAruvnKk") is True
+    assert _is_youtube_source("//youtube.com/watch?v=aircAruvnKk") is True
+
+    # Non-HTTPS schemes
+    assert _is_youtube_source("file://youtube.com/clip") is False
+    assert _is_youtube_source("ftp://youtube.com/clip") is False
+    assert _is_youtube_source("http://youtube.com/watch?v=aircAruvnKk") is False
+
+    # Attack/false positive URLs containing youtube substrings
+    assert _is_youtube_source("https://attacker.com/youtube.com") is False
+    assert _is_youtube_source("https://attacker.com?v=youtube.com") is False
+    assert _is_youtube_source("https://youtube.com.attacker.com") is False
+    assert _is_youtube_source("https://notyoutube.com") is False
+    assert _is_youtube_source("https://attacker.com/youtu.be") is False
+    assert _is_youtube_source("https://attacker.com/youtube-nocookie.com") is False
+    assert _is_youtube_source("/tmp/videos/youtube.com.mp4") is False
+    assert _is_youtube_source("relative/youtube.com.mp4") is False
+
+
+def test_non_youtube_url_with_youtube_in_path_keeps_captions(
+    tmp_path: Path,
+) -> None:
+    request = make_request(tmp_path, {"transcript"}, asr_enabled=True)
+    inspection = SourceInspection(
+        source="https://example.com/videos/youtube.com/clip.mp4",
+        is_url=True,
+        duration_seconds=120.0,
+        caption_tracks=[make_caption("manual")],
+        formats=[{"format_id": "fixture", "ext": "mp4"}],
+        metadata={"title": "fixture"},
+    )
+    plan = build_execution_plan(request, inspection, make_capabilities())
+    stage_names = set(stages_by_name(plan))
+
+    assert "captions" in stage_names
+    assert "transcribe" not in stage_names
+
+
 def test_ocr_adds_the_frame_dependency_and_no_unrequested_audio_branch(
     tmp_path: Path,
 ) -> None:
