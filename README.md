@@ -236,6 +236,32 @@ vidscope analyze-video \
 vidscope mcp
 ```
 
+### Agent Evaluation Harness (`vidscope eval`)
+Run automated agent evaluation benchmarks (Phase 1 protocol hygiene and timeline semantic comprehension) via headless MCP drivers:
+
+```bash
+# Run Phase 1 protocol hygiene suite (6 core scenarios, 100 runs, 4 parallel workers)
+vidscope eval --protocol-suite --runs 100 --concurrency 4 --thinking off --output PROTOCOL_REPORT.md
+
+# Stress-test a single prompt repeatedly with concurrent execution
+vidscope eval -p "Check get_job_status for job_id 'test_123'" --runs 20 --concurrency 4
+
+# Test stochastic async handoff flows (randomly simulate sync vs async job status workflows)
+vidscope eval -p "Analyze video mock://demo.mp4 and summarize it" --runs 10 --mock-async random
+
+# Run timeline semantic comprehension benchmark against a ground-truth dataset
+vidscope eval -d benchmarks/eval_harness/datasets/demo.yaml --output EVAL_REPORT.md
+```
+
+#### Evaluation Options (`vidscope eval`)
+- `--protocol-suite`: Standard Phase 1 protocol hygiene evaluation suite.
+- `--runs` / `-n`: Number of iterations to run (default: 1 for prompt, 100 for suite).
+- `--concurrency` / `-c`: Number of parallel worker threads (default: 4).
+- `--thinking`: OMP thinking level (`off`, `minimal`, `low`, `medium`, `high`, `max`; default: `off`).
+- `--mock / --no-mock`: Fast zero-cost FastMCP mock simulation mode (default: `--mock`).
+- `--mock-async`: Mock async handoff mode: `auto` (default, detects via URL/duration), `sync` (forces immediate return), `async` (forces `get_job_status` background handoff), or `random` (50% stochastic sync vs async).
+- `--output` / `-o`: Markdown report export path.
+
 ### CLI Options
 - `--verbose` / `-v`: Enable verbose debug logging to standard error.
 - `--quiet` / `-q`: Suppress non-error logging to standard error.
@@ -244,6 +270,7 @@ vidscope mcp
 - `--start-seconds`: Window start time in seconds (default: 0.0).
 - `--end-seconds`: Window end time in seconds (default: 180.0, max 180s duration).
 - `--task`: Repeatable task flag (`metadata`, `transcript`, `vad`, `frames`, `ocr`).
+
 
 ---
 

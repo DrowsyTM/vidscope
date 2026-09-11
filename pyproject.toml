@@ -32,6 +32,7 @@ dependencies = [
   "youtube-transcript-api>=1.2.0",
   "curl-cffi>=0.7.0",
   "bgutil-ytdlp-pot-provider>=2.0.0",
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

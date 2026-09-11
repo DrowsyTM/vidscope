@@ -71,7 +71,7 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
             "sync_timeout_seconds": 5.0,
         },
         "response": {
-            "status": "processing",
+            "status": "completed",
             "job_id": "job_e7b29a14-8f43-4c9b-98f2-1d573be04f21",
             "source": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "start_seconds": 0.0,
@@ -81,6 +81,56 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
                 "analyzed_start_seconds": 0.0,
                 "analyzed_end_seconds": 180.0,
                 "analyzed_duration_seconds": 180.0,
+                "video_duration_seconds": 213.0,
+                "transcript_start_seconds": 18.5,
+                "transcript_end_seconds": 175.2,
+                "transcript_segments_count": 42,
+                "transcript_status": "completed",
+            },
+            "total_chunks": 1,
+            "completed_chunks": 1,
+            "next_since_chunk": 1,
+            "has_more": False,
+            "timeline": [
+                {
+                    "chunk_index": 0,
+                    "mode": "speech_and_visual",
+                    "transcript_status": "completed",
+                    "start_seconds": 0.0,
+                    "end_seconds": 180.0,
+                    "formatted_range": "00:00:00 - 00:03:00",
+                    "summary": "We're no strangers to love. You know the rules and so do I...",
+                    "keyframes": [
+                        {
+                            "frame_id": "frame_0000_003600",
+                            "timestamp_seconds": 36.0,
+                            "formatted_time": "00:00:36",
+                            "ocr_text": "Rick Astley - Whenever You Need Somebody",
+                            "ocr_confidence": 0.94,
+                        },
+                        {
+                            "frame_id": "frame_0000_007200",
+                            "timestamp_seconds": 72.0,
+                            "formatted_time": "00:01:12",
+                            "ocr_text": "RCA RECORDS 1987",
+                            "ocr_confidence": 0.89,
+                        },
+                    ],
+                }
+            ],
+            "hint": "Use search_video(job_id=...) to search transcript or view_frame(frame_id=...) to inspect frames.",
+        },
+        "async_response": {
+            "status": "processing",
+            "job_id": "job_e7b29a14-8f43-4c9b-98f2-1d573be04f21",
+            "source": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "start_seconds": 0.0,
+            "end_seconds": 180.0,
+            "coverage": {
+                "is_full_video": False,
+                "analyzed_start_seconds": 0.0,
+                "analyzed_end_seconds": 0.0,
+                "analyzed_duration_seconds": 0.0,
                 "video_duration_seconds": 213.0,
                 "transcript_start_seconds": None,
                 "transcript_end_seconds": None,
@@ -92,10 +142,9 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
             "next_since_chunk": 0,
             "has_more": True,
             "next_action": "get_job_status",
-            "retry_after_seconds": 6.2,
-            "estimated_completion_seconds": 12.0,
+            "estimated_remaining_seconds": 6.2,
             "initial_timeline": [],
-            "hint": "Poll get_job_status(job_id='job_e7b29a14-8f43-4c9b-98f2-1d573be04f21', since_chunk=0)",
+            "hint": "Poll get_job_status(job_id='job_e7b29a14-8f43-4c9b-98f2-1d573be04f21')",
         },
     },
     "get_job_status": {
@@ -465,12 +514,31 @@ async def generate_mcp_markdown(server: Any = None) -> str:
             lines.append("```")
             lines.append("")
 
-            lines.append("#### Realistic Response Example")
-            lines.append("")
-            lines.append("```json")
-            lines.append(json.dumps(example_data["response"], indent=2))
-            lines.append("```")
-            lines.append("")
+            if "async_response" in example_data:
+                lines.append(
+                    "#### Realistic Response Example (Synchronous Completion <= 5.0s)"
+                )
+                lines.append("")
+                lines.append("```json")
+                lines.append(json.dumps(example_data["response"], indent=2))
+                lines.append("```")
+                lines.append("")
+
+                lines.append(
+                    "#### Realistic Response Example (Async Background Handoff > 5.0s)"
+                )
+                lines.append("")
+                lines.append("```json")
+                lines.append(json.dumps(example_data["async_response"], indent=2))
+                lines.append("```")
+                lines.append("")
+            else:
+                lines.append("#### Realistic Response Example")
+                lines.append("")
+                lines.append("```json")
+                lines.append(json.dumps(example_data["response"], indent=2))
+                lines.append("```")
+                lines.append("")
 
         lines.append("---")
         lines.append("")

@@ -240,6 +240,192 @@ def docs_command(
         raise typer.Exit(code=code)
 
 
+@app.command("eval")
+def eval_command(
+    prompt: Annotated[
+        str | None,
+        typer.Option(
+            "--prompt",
+            "-p",
+            help="Single evaluation prompt to test agent tool execution.",
+        ),
+    ] = None,
+    dataset: Annotated[
+        Path | None,
+        typer.Option(
+            "--dataset",
+            "-d",
+            help="Path to YAML benchmark dataset file.",
+        ),
+    ] = None,
+    protocol_suite: Annotated[
+        bool,
+        typer.Option(
+            "--protocol-suite",
+            help="Run standardized Phase 1 protocol hygiene test suite.",
+        ),
+    ] = False,
+    runs: Annotated[
+        int,
+        typer.Option(
+            "--runs",
+            "-n",
+            help="Number of iterations to execute for prompt or protocol suite.",
+        ),
+    ] = 1,
+    concurrency: Annotated[
+        int,
+        typer.Option(
+            "--concurrency",
+            "-c",
+            help="Number of concurrent worker threads for batched execution.",
+        ),
+    ] = 4,
+    thinking: Annotated[
+        str,
+        typer.Option(
+            "--thinking",
+            help="Thinking level for OMP: off, minimal, low, medium, high, max.",
+        ),
+    ] = "off",
+    approval_mode: Annotated[
+        str,
+        typer.Option("--approval-mode", help="OMP approval mode."),
+    ] = "yolo",
+    timeout_seconds: Annotated[
+        float,
+        typer.Option("--timeout", help="Timeout per evaluation task in seconds."),
+    ] = 180.0,
+    model: Annotated[
+        str | None,
+        typer.Option("--model", "-m", help="OMP model override."),
+    ] = None,
+    omp_bin: Annotated[
+        str | None,
+        typer.Option("--omp-bin", help="Path to OMP binary."),
+    ] = None,
+    mock: Annotated[
+        bool,
+        typer.Option(
+            "--mock/--no-mock",
+            help="Use mock FastMCP mode for rapid zero-cost protocol evaluations.",
+        ),
+    ] = True,
+    mock_async: Annotated[
+        str | None,
+        typer.Option(
+            "--mock-async",
+            help="Mock async behavior: 'auto', 'sync', 'async', or 'random'.",
+        ),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Target markdown file to save report."),
+    ] = None,
+) -> None:
+    """Run agent timeline comprehension and protocol hygiene evaluations via OMP."""
+    from .eval_harness import load_benchmark_dataset
+    from .eval_runner import OMPEvalRunner
+
+    if not prompt and not dataset and not protocol_suite:
+        typer.echo(
+            "Error: Must provide either --prompt, --dataset, or --protocol-suite.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    runner = OMPEvalRunner(
+        omp_bin=omp_bin,
+        thinking=thinking,
+        approval_mode=approval_mode,
+        model=model,
+        timeout_seconds=timeout_seconds,
+        mock_mcp=mock,
+        mock_async=mock_async,
+    )
+
+    if protocol_suite:
+        target_runs = runs if runs > 1 else 100
+        typer.echo(
+            f"Running Phase 1 Protocol Hygiene Suite ({target_runs} runs, concurrency={concurrency}, thinking={thinking})..."
+        )
+
+        def _on_suite_run(sc_id: str, done: int, total: int, res: Any) -> None:
+            status = "OK" if not res.scorecard.schema_validation_errors else "FAIL"
+            typer.echo(
+                f"  [{done}/{total}] scenario={sc_id} calls={len(res.traces)} ({status}) in {res.duration_seconds:.2f}s"
+            )
+
+        suite_report = runner.run_protocol_suite(
+            total_runs=target_runs,
+            concurrency=concurrency,
+            on_run_complete=_on_suite_run,
+        )
+        report_md = suite_report.to_markdown()
+        typer.echo("\n" + report_md)
+
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(report_md, encoding="utf-8")
+            typer.echo(f"\nReport written to: {output}")
+        return
+
+    if prompt:
+        if runs > 1:
+            typer.echo(
+                f"Running prompt repeatedly ({runs} runs, concurrency={concurrency}, thinking={thinking})..."
+            )
+
+            def _on_prompt_run(cur: int, tot: int, res: Any) -> None:
+                typer.echo(
+                    f"  [{cur}/{tot}] calls={len(res.traces)} errors={res.scorecard.schema_validation_errors} in {res.duration_seconds:.2f}s"
+                )
+
+            scorecard, _ = runner.run_repeated_prompt(
+                prompt,
+                runs=runs,
+                concurrency=concurrency,
+                on_run_complete=_on_prompt_run,
+            )
+            report_md = (
+                f"# Repeated Prompt Protocol Scorecard ({runs} runs)\n\n"
+                + "## 1. Protocol Hygiene Scorecard\n\n"
+                + scorecard.to_markdown_table()
+                + "\n\n## 2. Tool Usage Statistics\n\n"
+                + scorecard.tool_usage_markdown_table(total_runs=runs)
+            )
+            typer.echo("\n" + report_md)
+
+            if output:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(report_md, encoding="utf-8")
+                typer.echo(f"\nReport written to: {output}")
+        else:
+            typer.echo(f"Running prompt via OMP (thinking={thinking})...")
+            res = runner.run_prompt(prompt)
+            typer.echo("\n### Agent Response:")
+            typer.echo(res.final_text)
+            typer.echo("\n### Protocol Scorecard:")
+            typer.echo(res.scorecard.to_markdown_table())
+            typer.echo("\n### Tool Usage Statistics:")
+            typer.echo(res.scorecard.tool_usage_markdown_table(total_runs=1))
+        return
+
+    if dataset:
+        ds = load_benchmark_dataset(str(dataset))
+        typer.echo(
+            f"Running benchmark dataset '{ds.video_id}' via OMP (thinking={thinking})..."
+        )
+        report = runner.run_dataset(ds)
+        report_md = report.to_markdown()
+        typer.echo("\n" + report_md)
+
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(report_md, encoding="utf-8")
+            typer.echo(f"\nReport written to: {output}")
+
+
 if __name__ == "__main__":
     app()
 

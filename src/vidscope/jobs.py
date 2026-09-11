@@ -352,7 +352,6 @@ class JobState:
             "next_since_chunk": total_available,
             "has_more": has_more,
             "next_action": "get_job_status" if has_more else None,
-            "retry_after_seconds": max(1.0, round(remaining, 1)) if has_more else 0.0,
             "message": message,
             "error": self.error,
         }
