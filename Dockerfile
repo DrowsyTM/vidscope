@@ -25,7 +25,12 @@ COPY --chown=appuser:appuser requirements-docker.txt /home/appuser/app/requireme
 RUN pip install --no-cache-dir --user --require-hashes -r /home/appuser/app/requirements-docker.txt
 
 COPY --chown=appuser:appuser . /home/appuser/app
-RUN pip install --no-cache-dir --user --no-deps .
+RUN set -e; \
+    pip wheel --no-cache-dir --no-deps -w /tmp/wheels . && \
+    HASH=$(pip hash /tmp/wheels/vidscope-*.whl | sed -n 's/^ *--hash=//p') && \
+    VER=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])") && \
+    pip install --no-cache-dir --user --no-deps --no-index --find-links=/tmp/wheels --require-hashes "vidscope==$VER" --hash="$HASH" && \
+    rm -rf /tmp/wheels
 
 ENTRYPOINT ["vidscope"]
 CMD ["mcp"]
