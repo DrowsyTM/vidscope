@@ -20,25 +20,44 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
         },
         "response": {
             "source": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            "duration_seconds": 213.0,
             "title": "Rick Astley - Never Gonna Give You Up (Official Music Video)",
-            "available_subtitles": [
+            "duration_seconds": 213.0,
+            "formatted_duration": "00:03:33",
+            "has_captions": True,
+            "languages": ["en"],
+            "caption_tracks_listed": [
                 {
                     "language": "en",
                     "kind": "manual",
                     "provider": "youtube",
-                    "source_url": None,
                 }
             ],
+            "capabilities": {
+                "local_asr_available": True,
+                "local_ocr_available": True,
+            },
             "chapters": [
-                {"title": "Intro", "start_seconds": 0.0, "end_seconds": 18.5},
-                {"title": "Chorus", "start_seconds": 18.5, "end_seconds": 43.0},
-                {"title": "Verse 2", "start_seconds": 43.0, "end_seconds": 85.0},
-            ],
-            "formats": [
-                {"format_id": "18", "ext": "mp4", "resolution": "640x360"},
-                {"format_id": "22", "ext": "mp4", "resolution": "1280x720"},
-                {"format_id": "140", "ext": "m4a", "resolution": "audio-only"},
+                {
+                    "title": "Intro",
+                    "start_seconds": 0.0,
+                    "end_seconds": 18.5,
+                    "formatted_start": "00:00:00",
+                    "formatted_end": "00:00:18",
+                },
+                {
+                    "title": "Chorus",
+                    "start_seconds": 18.5,
+                    "end_seconds": 43.0,
+                    "formatted_start": "00:00:18",
+                    "formatted_end": "00:00:43",
+                },
+                {
+                    "title": "Verse 2",
+                    "start_seconds": 43.0,
+                    "end_seconds": 85.0,
+                    "formatted_start": "00:00:43",
+                    "formatted_end": "00:01:25",
+                },
             ],
         },
     },
@@ -52,37 +71,31 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
             "sync_timeout_seconds": 5.0,
         },
         "response": {
-            "job_id": "job_e7b29a14-8f43-4c9b-98f2-1d573be04f21",
             "status": "processing",
-            "progress": 0.45,
-            "current_stage": "extract_frames",
-            "estimated_remaining_seconds": 6.2,
+            "job_id": "job_e7b29a14-8f43-4c9b-98f2-1d573be04f21",
+            "source": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "start_seconds": 0.0,
+            "end_seconds": 180.0,
             "coverage": {
-                "start_seconds": 0.0,
-                "end_seconds": 180.0,
-                "duration_seconds": 180.0,
+                "is_full_video": False,
+                "analyzed_start_seconds": 0.0,
+                "analyzed_end_seconds": 180.0,
+                "analyzed_duration_seconds": 180.0,
+                "video_duration_seconds": 213.0,
+                "transcript_start_seconds": None,
+                "transcript_end_seconds": None,
+                "transcript_segments_count": 0,
+                "transcript_status": "pending",
             },
-            "timeline": [
-                {
-                    "chunk_index": 0,
-                    "time_range": {"start_seconds": 0.0, "end_seconds": 180.0},
-                    "transcript_status": "completed",
-                    "keyframes": [
-                        {
-                            "frame_id": "frame_0000_003600",
-                            "timestamp_seconds": 36.0,
-                            "ocr_text": "Rick Astley - Whenever You Need Somebody",
-                            "ocr_confidence": 0.94,
-                        },
-                        {
-                            "frame_id": "frame_0000_007200",
-                            "timestamp_seconds": 72.0,
-                            "ocr_text": "RCA RECORDS 1987",
-                            "ocr_confidence": 0.89,
-                        },
-                    ],
-                }
-            ],
+            "total_chunks": 1,
+            "completed_chunks": 0,
+            "next_since_chunk": 0,
+            "has_more": True,
+            "next_action": "get_job_status",
+            "retry_after_seconds": 6.2,
+            "estimated_completion_seconds": 12.0,
+            "initial_timeline": [],
+            "hint": "Poll get_job_status(job_id='job_e7b29a14-8f43-4c9b-98f2-1d573be04f21', since_chunk=0)",
         },
     },
     "get_job_status": {
@@ -93,43 +106,60 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
         },
         "response": {
             "job_id": "job_e7b29a14-8f43-4c9b-98f2-1d573be04f21",
+            "source": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "status": "completed",
-            "progress": 1.0,
-            "total_chunks": 1,
+            "progress_percentage": 100.0,
             "completed_chunks": 1,
+            "total_chunks": 1,
+            "estimated_remaining_seconds": 0.0,
+            "coverage": {
+                "is_full_video": False,
+                "analyzed_start_seconds": 0.0,
+                "analyzed_end_seconds": 180.0,
+                "analyzed_duration_seconds": 180.0,
+                "video_duration_seconds": 213.0,
+                "transcript_start_seconds": 18.5,
+                "transcript_end_seconds": 175.2,
+                "transcript_segments_count": 42,
+                "transcript_status": "completed",
+            },
             "timeline": [
                 {
                     "chunk_index": 0,
-                    "time_range": {"start_seconds": 0.0, "end_seconds": 180.0},
+                    "mode": "speech_and_visual",
                     "transcript_status": "completed",
+                    "start_seconds": 0.0,
+                    "end_seconds": 180.0,
+                    "formatted_range": "00:00:00 - 00:03:00",
+                    "summary": "We're no strangers to love. You know the rules and so do I...",
                     "keyframes": [
                         {
                             "frame_id": "frame_0000_003600",
                             "timestamp_seconds": 36.0,
+                            "formatted_time": "00:00:36",
                             "ocr_text": "Rick Astley - Whenever You Need Somebody",
-                            "ocr_confidence": 0.94,
+                            "ocr_status": "completed",
+                            "surrounding_dialogue": "We're no strangers to love",
                         },
                         {
                             "frame_id": "frame_0000_007200",
                             "timestamp_seconds": 72.0,
+                            "formatted_time": "00:01:12",
                             "ocr_text": "RCA RECORDS 1987",
-                            "ocr_confidence": 0.89,
-                        },
-                        {
-                            "frame_id": "frame_0000_010800",
-                            "timestamp_seconds": 108.0,
-                            "ocr_text": "",
-                            "ocr_confidence": 0.0,
-                        },
-                        {
-                            "frame_id": "frame_0000_014400",
-                            "timestamp_seconds": 144.0,
-                            "ocr_text": "",
-                            "ocr_confidence": 0.0,
+                            "ocr_status": "completed",
+                            "surrounding_dialogue": "Inside we both know what's been going on",
                         },
                     ],
                 }
             ],
+            "timeline_chunks_returned": 1,
+            "total_timeline_chunks": 1,
+            "next_since_chunk": 1,
+            "has_more": False,
+            "next_action": None,
+            "retry_after_seconds": 0.0,
+            "message": "Analysis completed successfully (1/1 chunks). Returned 1 timeline section(s).",
+            "error": None,
         },
     },
     "get_transcript": {
@@ -144,22 +174,34 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
             "job_id": "job_e7b29a14-8f43-4c9b-98f2-1d573be04f21",
             "start_seconds": 15.0,
             "end_seconds": 45.0,
-            "segment_count": 2,
-            "dialogue_text": "We're no strangers to love. You know the rules and so do I.",
+            "window_duration_seconds": 30.0,
+            "coverage": {
+                "is_full_video": False,
+                "analyzed_start_seconds": 0.0,
+                "analyzed_end_seconds": 180.0,
+                "analyzed_duration_seconds": 180.0,
+                "video_duration_seconds": 213.0,
+                "transcript_start_seconds": 18.5,
+                "transcript_end_seconds": 175.2,
+                "transcript_segments_count": 42,
+                "transcript_status": "completed",
+            },
+            "segments_count": 2,
             "segments": [
                 {
                     "start_seconds": 18.5,
                     "end_seconds": 22.1,
+                    "formatted_time": "00:00:18",
                     "text": "We're no strangers to love",
-                    "confidence": 0.98,
                 },
                 {
                     "start_seconds": 22.8,
                     "end_seconds": 26.4,
+                    "formatted_time": "00:00:22",
                     "text": "You know the rules and so do I",
-                    "confidence": 0.97,
                 },
             ],
+            "text": "We're no strangers to love You know the rules and so do I",
         },
     },
     "search_video": {
@@ -174,14 +216,26 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
         "response": {
             "job_id": "job_e7b29a14-8f43-4c9b-98f2-1d573be04f21",
             "query": "strangers to love",
-            "total_matches": 1,
+            "is_regex": False,
+            "case_sensitive": False,
+            "coverage": {
+                "is_full_video": False,
+                "analyzed_start_seconds": 0.0,
+                "analyzed_end_seconds": 180.0,
+                "analyzed_duration_seconds": 180.0,
+                "video_duration_seconds": 213.0,
+                "transcript_start_seconds": 18.5,
+                "transcript_end_seconds": 175.2,
+                "transcript_segments_count": 42,
+                "transcript_status": "completed",
+            },
+            "matches_count": 1,
             "matches": [
                 {
-                    "kind": "transcript",
-                    "timestamp_seconds": 18.5,
-                    "text": "We're no strangers to love",
-                    "context": "...We're no strangers to love. You know the rules...",
-                    "confidence": 0.98,
+                    "start_seconds": 18.5,
+                    "end_seconds": 22.1,
+                    "formatted_time": "00:00:18",
+                    "snippet": "We're no strangers to love",
                 }
             ],
         },
@@ -193,27 +247,38 @@ TOOL_EXAMPLES: dict[str, dict[str, Any]] = {
             "max_width": 1280,
         },
         "response": {
-            "frame_id": "frame_0000_003600",
-            "timestamp_seconds": 36.0,
-            "width": 1280,
-            "height": 720,
-            "mime_type": "image/jpeg",
-            "image_data": "<base64_encoded_jpeg_bytes>",
+            "content": [
+                {
+                    "frame_id": "frame_0000_003600",
+                    "timestamp_seconds": 36.0,
+                    "formatted_time": "00:00:36",
+                    "ocr_text": "Rick Astley - Whenever You Need Somebody",
+                },
+                {
+                    "type": "image",
+                    "mimeType": "image/jpeg",
+                    "data": "<base64_encoded_jpeg_bytes>",
+                },
+            ]
         },
     },
 }
 
 ERROR_RESPONSE_EXAMPLE = {
     "is_error": True,
-    "content": {
-        "code": "INVALID_REQUEST",
+    "structured_content": {
+        "ok": False,
+        "status": "failed",
+        "code": "URL_SCHEME_NOT_ALLOWED",
         "stage": "validate_source",
-        "message": "source must be an existing local file or an HTTPS video URL",
+        "message": "source URL scheme is not allowed",
         "retryable": False,
         "diagnostics": {
-            "source": "ftp://invalid-url.com",
-            "supported_schemes": ["https", "http", "file"],
+            "details": [],
         },
+        "artifact_refs": [],
+        "artifacts": [],
+        "manifest_uri": None,
     },
 }
 
@@ -232,17 +297,33 @@ def _format_type(schema: dict[str, Any]) -> str:
 
 
 def _format_constraints(schema: dict[str, Any]) -> str:
-    """Extract numeric/range constraints from schema."""
+    """Extract numeric/range constraints from schema, including anyOf variants."""
+    sub_schemas = [schema]
+    if "anyOf" in schema and isinstance(schema["anyOf"], list):
+        sub_schemas.extend(s for s in schema["anyOf"] if isinstance(s, dict))
+    if "allOf" in schema and isinstance(schema["allOf"], list):
+        sub_schemas.extend(s for s in schema["allOf"] if isinstance(s, dict))
+
     parts: list[str] = []
-    if "minimum" in schema:
-        parts.append(f">= {schema['minimum']}")
-    if "exclusiveMinimum" in schema:
-        parts.append(f"> {schema['exclusiveMinimum']}")
-    if "maximum" in schema:
-        parts.append(f"<= {schema['maximum']}")
-    if "exclusiveMaximum" in schema:
-        parts.append(f"< {schema['exclusiveMaximum']}")
-    return ", ".join(parts) if parts else "-"
+    for s in sub_schemas:
+        if "minimum" in s:
+            parts.append(f">= {s['minimum']}")
+        if "exclusiveMinimum" in s:
+            parts.append(f"> {s['exclusiveMinimum']}")
+        if "maximum" in s:
+            parts.append(f"<= {s['maximum']}")
+        if "exclusiveMaximum" in s:
+            parts.append(f"< {s['exclusiveMaximum']}")
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique_parts: list[str] = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            unique_parts.append(p)
+
+    return ", ".join(unique_parts) if unique_parts else "-"
 
 
 async def generate_mcp_markdown(server: Any = None) -> str:
@@ -251,7 +332,7 @@ async def generate_mcp_markdown(server: Any = None) -> str:
     tools = await active_mcp.list_tools()
     tool_map = {t.name: t for t in tools}
 
-    ordered_tool_names = [
+    preferred_order = [
         "get_video_info",
         "analyze_video",
         "get_job_status",
@@ -259,6 +340,10 @@ async def generate_mcp_markdown(server: Any = None) -> str:
         "search_video",
         "view_frame",
     ]
+    ordered_tool_names = [name for name in preferred_order if name in tool_map]
+    for name in sorted(tool_map.keys()):
+        if name not in ordered_tool_names:
+            ordered_tool_names.append(name)
 
     resources = (
         await active_mcp.list_resources()

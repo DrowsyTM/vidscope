@@ -25,6 +25,10 @@ Timings measured under native execution with deterministic fixtures:
 
 ## 2. End-to-End Pipeline Latency & Memory Budget
 
+> [!NOTE]
+> The stage figures below represent nominal engineering budgets and architectural targets.
+> Dynamic execution microbenchmarks are measured in Section 1.
+
 Vidscope structures video analysis into independent, bounded stages across 180-second chunks.
 Below is the nominal latency and resource overhead budget on standard commodity hardware:
 
@@ -42,6 +46,11 @@ Below is the nominal latency and resource overhead budget on standard commodity 
 ---
 
 ## 3. ASR Accuracy & Alignment Evaluation
+## 3. ASR Accuracy & Alignment Reference Targets
+
+> [!NOTE]
+> The metrics below establish nominal baseline thresholds and target reference standards for ASR evaluation
+> against human ground truth captions. Dynamic execution benchmark timings are captured in Section 1.
 
 Speech transcript accuracy is validated against reference timed captions using Levenshtein distance metrics:
 

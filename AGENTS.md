@@ -20,8 +20,10 @@ This document establishes operational constraints, architectural invariants, and
     - `-nostdin` to prevent subprocesses from hanging on standard input.
     - `-protocol_whitelist "file,pipe,crypto,data"` to prevent arbitrary protocol schemes.
   - Every invocation of `tesseract` MUST include the POSIX option terminator `--` immediately before the input frame path:
+  - Invocations of `tesseract` require resolved absolute paths (`frame_path.resolve()`) to ensure the input filename begins with `/` and cannot be parsed as a command-line option (Tesseract positional syntax parses `argv[1]` directly as `imagename` and does not support `--` option termination):
     ```python
     command = [tesseract_bin, "--", str(frame_path), "stdout", ...]
+    command = [tesseract_bin, str(frame_resolved), "stdout", ...]
     ```
 - **Execution timeouts**:
   - Subprocesses must be strictly bounded with timeouts (e.g. 300s for media, 60s for OCR).
