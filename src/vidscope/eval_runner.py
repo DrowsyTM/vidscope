@@ -462,11 +462,25 @@ class OMPEvalRunner:
         mock_mcp: bool = True,
         mock_async: str | None = None,
     ) -> None:
-        resolved_bin = omp_bin or shutil.which("omp") or "/home/dima/.bun/bin/omp"
-        if not Path(resolved_bin).is_file():
-            raise FileNotFoundError(
-                f"OMP binary not found at '{resolved_bin}'. Please install OMP or provide valid path."
-            )
+        if omp_bin is not None:
+            if not (Path(omp_bin).is_file() or shutil.which(omp_bin)):
+                raise FileNotFoundError(
+                    f"OMP binary not found at '{omp_bin}'. Please provide a valid path."
+                )
+            resolved_bin = omp_bin
+        else:
+            resolved = shutil.which("omp")
+            if not resolved:
+                for candidate in [
+                    Path.home() / ".bun" / "bin" / "omp",
+                    Path.home() / ".local" / "bin" / "omp",
+                    Path.home() / ".cargo" / "bin" / "omp",
+                ]:
+                    if candidate.is_file():
+                        resolved = str(candidate)
+                        break
+            resolved_bin = resolved or "omp"
+
         self.omp_bin = resolved_bin
         self.thinking = thinking
         self.approval_mode = approval_mode
@@ -479,6 +493,11 @@ class OMPEvalRunner:
         """Run a single prompt through OMP and extract invocation traces and response."""
         import os
         import time
+
+        if not (shutil.which(self.omp_bin) or Path(self.omp_bin).is_file()):
+            raise FileNotFoundError(
+                f"OMP binary '{self.omp_bin}' not found. Please install OMP or provide valid path via --omp-bin."
+            )
 
         cmd = [
             self.omp_bin,

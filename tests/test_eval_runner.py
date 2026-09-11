@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from vidscope.cli import app
@@ -219,7 +221,7 @@ def test_omp_runner_run_prompt(mock_run: MagicMock) -> None:
     )
 
     runner_inst = OMPEvalRunner(
-        omp_bin="/home/dima/.bun/bin/omp",
+        omp_bin=sys.executable,
         thinking="off",
     )
     res = runner_inst.run_prompt("Test prompt")
@@ -271,7 +273,7 @@ def test_omp_runner_run_dataset(mock_run: MagicMock) -> None:
     )
 
     runner_inst = OMPEvalRunner(
-        omp_bin="/home/dima/.bun/bin/omp",
+        omp_bin=sys.executable,
         thinking="off",
     )
     report = runner_inst.run_dataset(dataset)
@@ -305,7 +307,7 @@ def test_omp_runner_run_repeated_prompt(mock_run: MagicMock) -> None:
         returncode=0,
     )
     runner_inst = OMPEvalRunner(
-        omp_bin="/home/dima/.bun/bin/omp",
+        omp_bin=sys.executable,
         thinking="off",
     )
     scorecard, results = runner_inst.run_repeated_prompt("Check prompt", runs=3)
@@ -329,7 +331,7 @@ def test_omp_runner_run_protocol_suite(mock_run: MagicMock) -> None:
         returncode=0,
     )
     runner_inst = OMPEvalRunner(
-        omp_bin="/home/dima/.bun/bin/omp",
+        omp_bin=sys.executable,
         thinking="off",
     )
     report = runner_inst.run_protocol_suite(total_runs=10)
@@ -378,7 +380,7 @@ def test_omp_runner_concurrency_execution(mock_run: MagicMock) -> None:
         returncode=0,
     )
     runner_inst = OMPEvalRunner(
-        omp_bin="/home/dima/.bun/bin/omp",
+        omp_bin=sys.executable,
         thinking="off",
     )
     # Repeated prompt with concurrency=3
@@ -407,7 +409,7 @@ def test_omp_runner_mock_async_env(mock_run: MagicMock) -> None:
         returncode=0,
     )
     runner_inst = OMPEvalRunner(
-        omp_bin="/home/dima/.bun/bin/omp",
+        omp_bin=sys.executable,
         thinking="off",
         mock_mcp=True,
         mock_async="random",
@@ -417,3 +419,26 @@ def test_omp_runner_mock_async_env(mock_run: MagicMock) -> None:
     passed_env = mock_run.call_args[1]["env"]
     assert passed_env["VIDSCOPE_MOCK_MCP"] == "1"
     assert passed_env["VIDSCOPE_MOCK_ASYNC"] == "random"
+
+
+def test_omp_runner_explicit_missing_binary() -> None:
+    with pytest.raises(FileNotFoundError, match="OMP binary not found at"):
+        OMPEvalRunner(omp_bin="/nonexistent/custom/omp_bin")
+
+
+def test_omp_runner_missing_in_path_on_run() -> None:
+    with (
+        patch("shutil.which", return_value=None),
+        patch("pathlib.Path.is_file", return_value=False),
+    ):
+        runner_inst = OMPEvalRunner()
+        with pytest.raises(FileNotFoundError, match="OMP binary 'omp' not found"):
+            runner_inst.run_prompt("Test")
+
+
+def test_cli_eval_missing_binary_error() -> None:
+    res = runner.invoke(
+        app, ["eval", "--prompt", "test", "--omp-bin", "/nonexistent/custom/omp_bin"]
+    )
+    assert res.exit_code == 1
+    assert "Error: OMP binary not found at '/nonexistent/custom/omp_bin'" in res.output

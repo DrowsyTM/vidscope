@@ -334,96 +334,100 @@ def eval_command(
         )
         raise typer.Exit(code=1)
 
-    runner = OMPEvalRunner(
-        omp_bin=omp_bin,
-        thinking=thinking,
-        approval_mode=approval_mode,
-        model=model,
-        timeout_seconds=timeout_seconds,
-        mock_mcp=mock,
-        mock_async=mock_async,
-    )
-
-    if protocol_suite:
-        target_runs = runs if runs > 1 else 100
-        typer.echo(
-            f"Running Phase 1 Protocol Hygiene Suite ({target_runs} runs, concurrency={concurrency}, thinking={thinking})..."
+    try:
+        runner = OMPEvalRunner(
+            omp_bin=omp_bin,
+            thinking=thinking,
+            approval_mode=approval_mode,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            mock_mcp=mock,
+            mock_async=mock_async,
         )
 
-        def _on_suite_run(sc_id: str, done: int, total: int, res: Any) -> None:
-            status = "OK" if not res.scorecard.schema_validation_errors else "FAIL"
+        if protocol_suite:
+            target_runs = runs if runs > 1 else 100
             typer.echo(
-                f"  [{done}/{total}] scenario={sc_id} calls={len(res.traces)} ({status}) in {res.duration_seconds:.2f}s"
+                f"Running Phase 1 Protocol Hygiene Suite ({target_runs} runs, concurrency={concurrency}, thinking={thinking})..."
             )
 
-        suite_report = runner.run_protocol_suite(
-            total_runs=target_runs,
-            concurrency=concurrency,
-            on_run_complete=_on_suite_run,
-        )
-        report_md = suite_report.to_markdown()
-        typer.echo("\n" + report_md)
-
-        if output:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(report_md, encoding="utf-8")
-            typer.echo(f"\nReport written to: {output}")
-        return
-
-    if prompt:
-        if runs > 1:
-            typer.echo(
-                f"Running prompt repeatedly ({runs} runs, concurrency={concurrency}, thinking={thinking})..."
-            )
-
-            def _on_prompt_run(cur: int, tot: int, res: Any) -> None:
+            def _on_suite_run(sc_id: str, done: int, total: int, res: Any) -> None:
+                status = "OK" if not res.scorecard.schema_validation_errors else "FAIL"
                 typer.echo(
-                    f"  [{cur}/{tot}] calls={len(res.traces)} errors={res.scorecard.schema_validation_errors} in {res.duration_seconds:.2f}s"
+                    f"  [{done}/{total}] scenario={sc_id} calls={len(res.traces)} ({status}) in {res.duration_seconds:.2f}s"
                 )
 
-            scorecard, _ = runner.run_repeated_prompt(
-                prompt,
-                runs=runs,
+            suite_report = runner.run_protocol_suite(
+                total_runs=target_runs,
                 concurrency=concurrency,
-                on_run_complete=_on_prompt_run,
+                on_run_complete=_on_suite_run,
             )
-            report_md = (
-                f"# Repeated Prompt Protocol Scorecard ({runs} runs)\n\n"
-                + "## 1. Protocol Hygiene Scorecard\n\n"
-                + scorecard.to_markdown_table()
-                + "\n\n## 2. Tool Usage Statistics\n\n"
-                + scorecard.tool_usage_markdown_table(total_runs=runs)
-            )
+            report_md = suite_report.to_markdown()
             typer.echo("\n" + report_md)
 
             if output:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(report_md, encoding="utf-8")
                 typer.echo(f"\nReport written to: {output}")
-        else:
-            typer.echo(f"Running prompt via OMP (thinking={thinking})...")
-            res = runner.run_prompt(prompt)
-            typer.echo("\n### Agent Response:")
-            typer.echo(res.final_text)
-            typer.echo("\n### Protocol Scorecard:")
-            typer.echo(res.scorecard.to_markdown_table())
-            typer.echo("\n### Tool Usage Statistics:")
-            typer.echo(res.scorecard.tool_usage_markdown_table(total_runs=1))
-        return
+            return
 
-    if dataset:
-        ds = load_benchmark_dataset(str(dataset))
-        typer.echo(
-            f"Running benchmark dataset '{ds.video_id}' via OMP (thinking={thinking})..."
-        )
-        report = runner.run_dataset(ds)
-        report_md = report.to_markdown()
-        typer.echo("\n" + report_md)
+        if prompt:
+            if runs > 1:
+                typer.echo(
+                    f"Running prompt repeatedly ({runs} runs, concurrency={concurrency}, thinking={thinking})..."
+                )
 
-        if output:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(report_md, encoding="utf-8")
-            typer.echo(f"\nReport written to: {output}")
+                def _on_prompt_run(cur: int, tot: int, res: Any) -> None:
+                    typer.echo(
+                        f"  [{cur}/{tot}] calls={len(res.traces)} errors={res.scorecard.schema_validation_errors} in {res.duration_seconds:.2f}s"
+                    )
+
+                scorecard, _ = runner.run_repeated_prompt(
+                    prompt,
+                    runs=runs,
+                    concurrency=concurrency,
+                    on_run_complete=_on_prompt_run,
+                )
+                report_md = (
+                    f"# Repeated Prompt Protocol Scorecard ({runs} runs)\n\n"
+                    + "## 1. Protocol Hygiene Scorecard\n\n"
+                    + scorecard.to_markdown_table()
+                    + "\n\n## 2. Tool Usage Statistics\n\n"
+                    + scorecard.tool_usage_markdown_table(total_runs=runs)
+                )
+                typer.echo("\n" + report_md)
+
+                if output:
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_text(report_md, encoding="utf-8")
+                    typer.echo(f"\nReport written to: {output}")
+            else:
+                typer.echo(f"Running prompt via OMP (thinking={thinking})...")
+                res = runner.run_prompt(prompt)
+                typer.echo("\n### Agent Response:")
+                typer.echo(res.final_text)
+                typer.echo("\n### Protocol Scorecard:")
+                typer.echo(res.scorecard.to_markdown_table())
+                typer.echo("\n### Tool Usage Statistics:")
+                typer.echo(res.scorecard.tool_usage_markdown_table(total_runs=1))
+            return
+
+        if dataset:
+            ds = load_benchmark_dataset(str(dataset))
+            typer.echo(
+                f"Running benchmark dataset '{ds.video_id}' via OMP (thinking={thinking})..."
+            )
+            report = runner.run_dataset(ds)
+            report_md = report.to_markdown()
+            typer.echo("\n" + report_md)
+
+            if output:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(report_md, encoding="utf-8")
+                typer.echo(f"\nReport written to: {output}")
+    except FileNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
 
 
 if __name__ == "__main__":
